@@ -1975,6 +1975,18 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
         if (!(unix_prot & PROT_WRITE)) return -1;
     }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* macOS on Apple Silicon enforces W^X: write+exec mappings always fail.
+     * This matters for PE images with 4K section alignment, where a single
+     * 16K host page can contain both code and data pages whose protections
+     * get merged.  Degrade to read-write and let virtual_handle_fault flip
+     * the page to read-exec on an instruction fetch (and back on a write). */
+    if ((unix_prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+    {
+        TRACE( "degrading w^x protection on %p-%p\n", base, (char *)base + size - 1 );
+        return mprotect( base, size, unix_prot & ~PROT_EXEC );
+    }
+#endif
     return mprotect( base, size, unix_prot );
 }
 
@@ -4760,7 +4772,26 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, 
             if ((vprot & VPROT_WRITEWATCH) || is_write_watch_range( page, 1 ))
                 ret = STATUS_SUCCESS;
         }
+#if defined(__APPLE__) && defined(__aarch64__)
+        /* W^X-degraded host page (mixed code+data, see mprotect_exec):
+         * the page is currently read-exec, flip it back to read-write */
+        if (ret && is_vprot_exec_write( vprot ) &&
+            (get_unix_prot( get_page_vprot( addr )) & PROT_WRITE))
+        {
+            if (!mprotect( page, host_page_size, get_unix_prot( vprot ) & ~PROT_EXEC ))
+                ret = STATUS_SUCCESS;
+        }
+#endif
     }
+#if defined(__APPLE__) && defined(__aarch64__)
+    else if (err == EXCEPTION_EXECUTE_FAULT && is_vprot_exec_write( vprot ) &&
+             (get_page_vprot( addr ) & VPROT_EXEC))
+    {
+        /* W^X-degraded host page currently read-write: flip it to read-exec */
+        if (!mprotect( page, host_page_size, get_unix_prot( vprot ) & ~PROT_WRITE ))
+            ret = STATUS_SUCCESS;
+    }
+#endif
     mutex_unlock( &virtual_mutex );
     rec->ExceptionCode = ret;
     return ret;
