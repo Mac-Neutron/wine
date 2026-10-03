@@ -3693,6 +3693,26 @@ void virtual_init(void)
     TRACE( "host page size: %uk\n", (UINT)host_page_size / 1024 );
 #endif
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    {
+        /* With com.apple.developer.cross-architecture-support the 4GB hard pagezero becomes one
+         * hard page plus a soft prot 0/0 reservation that MAP_FIXED may replace: treat it like
+         * the x86_64 zerofill reserve, so nothing else lands in the low 4GB. */
+        mach_vm_address_t addr = 0;
+        mach_vm_size_t size;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t obj;
+
+        if (!mach_vm_region( mach_task_self(), &addr, &size, VM_REGION_BASIC_INFO_64,
+                             (vm_region_info_t)&info, &count, &obj ))
+        {
+            TRACE( "lowest region %#llx-%#llx prot %d/%d\n", addr, addr + size, info.protection, info.max_protection );
+            if (addr && addr < 0x100000000 && !info.max_protection) mmap_add_reserved_area( (void *)addr, size );
+        }
+    }
+#endif
+
 #ifdef _WIN64
     host_addr_space_limit = get_host_addr_space_limit();
     TRACE( "host addr space limit: %p\n", host_addr_space_limit );
