@@ -492,7 +492,9 @@ NTSTATUS exec_wineloader( char **argv, int socketfd, const struct pe_image_info 
     WORD machine = pe_info->machine;
     ULONGLONG res_start = pe_info->base;
     ULONGLONG res_end = pe_info->base + pe_info->map_size;
-    char preloader_reserve[64], socket_env[64];
+    /* static: putenv keeps the pointer, and execve fails with EFAULT on strings within ARG_MAX
+     * of the user VA ceiling, where the first thread's kernel stack sits on macOS arm64 */
+    static char preloader_reserve[64], socket_env[64];
 
     if (pe_info->wine_fakedll) res_start = res_end = 0;
     if (pe_info->image_flags & IMAGE_FLAGS_ComPlusNativeReady)
