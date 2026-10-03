@@ -1185,6 +1185,102 @@ bool macdrv_client_surface_acquire_metal_swapchain(struct macdrv_client_surface 
     return surface->metal_swapchain != NULL;
 }
 
+/* What DXMT reads through macdrv_functions->get_win_data: Wine 8's macdrv_win_data head.
+ * Only client_cocoa_view (offset 24) is used; 11.x moved client_view to offset 16. */
+struct dxmt_win_data
+{
+    HWND                    hwnd;
+    WineWindow             *cocoa_window;
+    WineContentView        *cocoa_view;             /* gone since Wine 9, always NULL */
+    WineContentView        *client_cocoa_view;
+    struct macdrv_win_data *data;                   /* private: held until release */
+};
+C_ASSERT(offsetof(struct dxmt_win_data, client_cocoa_view) == 24);
+
+static void dxmt_surface_release(CFAllocatorRef allocator, const void *client)
+{
+    client_surface_release((struct client_surface *)client);
+}
+
+/* DXMT keeps the returned view's metal layer for the swapchain's life, so every call
+ * makes a client surface owned by the window, like CrossOver's d3dmetal.c does. */
+static struct dxmt_win_data *dxmt_get_win_data(HWND hwnd)
+{
+    static const CFArrayCallBacks callbacks = { .release = dxmt_surface_release };
+    struct dxmt_win_data *ret;
+    struct client_surface *client;
+
+    if (!(ret = calloc(1, sizeof(*ret)))) return NULL;
+    ret->hwnd = hwnd;
+    client = macdrv_CreateClientSurface(hwnd, 0, FALSE);  /* before get_win_data: it locks win data itself */
+    if (!(ret->data = get_win_data(hwnd)))
+    {
+        /* ponytail: other-process hwnd; client_cocoa_view stays NULL so DXMT aborts with its own message */
+        client_surface_release(client);
+        return ret;
+    }
+    if (!ret->data->dxmt_surfaces) ret->data->dxmt_surfaces = CFArrayCreateMutable(NULL, 0, &callbacks);
+    CFArrayAppendValue(ret->data->dxmt_surfaces, client);
+    ret->cocoa_window = ret->data->cocoa_window;
+    ret->client_cocoa_view = impl_from_client_surface(client)->cocoa_view;
+    macdrv_set_view_client_surface(ret->client_cocoa_view, client);
+    return ret;
+}
+
+static void dxmt_release_win_data(struct dxmt_win_data *data)
+{
+    if (!data) return;
+    release_win_data(data->data);
+    free(data);
+}
+
+/* A nextDrawable during window close can post a surface DestroyWindow has freed since, so present
+ * only a surface the window still lists. DestroyWindow frees them on this thread, so a listed one
+ * outlives client_surface_present. Events come for the toplevel's Cocoa window, so a child window's
+ * surface is never listed here: child-window swap chains aren't supported yet. */
+void macdrv_client_surface_presented(HWND hwnd, const macdrv_event *event)
+{
+    struct client_surface *client = event->client_surface_presented.client_surface;
+    struct macdrv_win_data *data;
+    BOOL listed;
+
+    if (!(data = get_win_data(hwnd))) return;
+    listed = data->dxmt_surfaces &&
+             CFArrayContainsValue(data->dxmt_surfaces, CFRangeMake(0, CFArrayGetCount(data->dxmt_surfaces)), client);
+    release_win_data(data);  /* before presenting: the surfaces lock ranks above win_data_mutex */
+    if (listed) client_surface_present(client);
+}
+
+/* Looked up by DXMT's winemetal.so with dlsym(RTLD_DEFAULT, "macdrv_functions"); the slot
+ * order is DXMT's struct macdrv_functions_t. DXMT calls slots 1, 2, 6, 7 and 8 only.
+ * ponytail: 10 slots, not D3DMetal's 24 (CrossOver d3dmetal.c); D3DMetal is x86_64 only. */
+DECLSPEC_EXPORT const struct
+{
+    void *init_display_devices;
+    struct dxmt_win_data *(*get_win_data)(HWND hwnd);
+    void (*release_win_data)(struct dxmt_win_data *data);
+    void *get_cocoa_window;
+    MTLDevice_id (*create_metal_device)(void);
+    void (*release_metal_device)(MTLDevice_id device);
+    WineMetalView *(*view_create_metal_view)(WineContentView *view, MTLDevice_id device);
+    CAMetalLayer *(*view_get_metal_layer)(WineMetalView *view);
+    void (*view_release_metal_view)(WineMetalView *view);
+    void *on_main_thread;
+} macdrv_functions =
+{
+    NULL,
+    dxmt_get_win_data,
+    dxmt_release_win_data,
+    NULL,
+    macdrv_create_metal_device,
+    macdrv_release_metal_device,
+    macdrv_view_create_metal_view,
+    macdrv_view_get_metal_layer,
+    macdrv_view_release_metal_view,
+    NULL,
+};
+
+
 /**********************************************************************
  *              SetDesktopWindow   (MACDRV.@)
  */
@@ -1269,6 +1365,8 @@ void macdrv_DestroyWindow(HWND hwnd)
 
     CFDictionaryRemoveValue(win_datas, hwnd);
     release_win_data(data);
+    /* after unlocking: releasing takes the win32u surfaces lock, which ranks above win_data_mutex */
+    if (data->dxmt_surfaces) CFRelease(data->dxmt_surfaces);
     free(data);
 }
 

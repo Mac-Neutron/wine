@@ -243,6 +243,8 @@ static inline BOOL stage_manager_enabled(void)
 
     WineMetalView *_metalView;
     NSMutableDictionary<NSNumber*, CALayerHost*>* _caLayerHosts;
+@public
+    void *client_surface;   /* set only on views handed out through macdrv_functions */
 }
 
 @property (readonly, nonatomic) BOOL everHadGLContext;
@@ -821,6 +823,42 @@ static inline BOOL stage_manager_enabled(void)
 @end
 
 
+/* DXMT presents straight to the layer, so nothing tells win32u about it. Report each
+ * nextDrawable on a macdrv_functions view to the window's thread, which runs
+ * client_surface_present(): that un-hides the view after a GDI flush hid it and
+ * re-applies the window's client rect, since win32u never updates this surface itself.
+ * nextDrawable runs on DXMT's thread, so the view tree is read on the main thread, the only
+ * one that changes it (macdrv_dispose_view frees the content view there, and AppKit
+ * deallocates windows there); the block holds the metal view, which DXMT keeps until
+ * macdrv_view_release_metal_view. */
+@interface WineMetalLayer : CAMetalLayer
+@end
+
+@implementation WineMetalLayer
+
+    - (id<CAMetalDrawable>) nextDrawable
+    {
+        NSView *view = (NSView*)self.delegate;
+
+        OnMainThreadAsync(^{
+            WineContentView *content = (WineContentView*)view.superview;
+
+            if ([content isKindOfClass:[WineContentView class]] && content->client_surface &&
+                [view.window isKindOfClass:[WineWindow class]])
+            {
+                WineWindow *window = (WineWindow*)view.window;
+                macdrv_event *event = macdrv_create_event(CLIENT_SURFACE_PRESENTED, window);
+                event->client_surface_presented.client_surface = content->client_surface;
+                [window.queue postEvent:event];
+                macdrv_release_event(event);
+            }
+        });
+        return [super nextDrawable];
+    }
+
+@end
+
+
 @implementation WineMetalView
 
     - (id) initWithFrame:(NSRect)frame device:(id<MTLDevice>)device
@@ -849,7 +887,7 @@ static inline BOOL stage_manager_enabled(void)
 
     - (CALayer*) makeBackingLayer
     {
-        CAMetalLayer *layer = [CAMetalLayer layer];
+        CAMetalLayer *layer = [WineMetalLayer layer];
         layer.device = _device;
         layer.framebufferOnly = YES;
         layer.magnificationFilter = kCAFilterNearest;
@@ -3633,6 +3671,11 @@ CAMetalLayer *macdrv_view_get_metal_layer(WineMetalView *view)
     });
 
     return layer;
+}
+
+void macdrv_set_view_client_surface(WineContentView *view, void *client_surface)
+{
+    view->client_surface = client_surface;
 }
 
 void macdrv_view_release_metal_view(WineMetalView *view)
