@@ -285,6 +285,7 @@ enum {
     WINDOW_MINIMIZE_REQUESTED,
     WINDOW_RESIZE_ENDED,
     WINDOW_RESTORE_REQUESTED,
+    CLIENT_SURFACE_PRESENTED,
     NUM_EVENT_TYPES
 };
 
@@ -306,6 +307,9 @@ typedef struct macdrv_event {
         struct {
             int reason;
         }                                           app_quit_requested;
+        struct {
+            void           *client_surface;
+        }                                           client_surface_presented;
         struct {
             bool activating;
         }                                           displays_changed;
@@ -503,6 +507,7 @@ extern void macdrv_release_metal_device(MTLDevice_id device);
 extern WineMetalView *macdrv_view_create_metal_view(WineContentView *view, MTLDevice_id device);
 extern CAMetalLayer *macdrv_view_get_metal_layer(WineMetalView *view);
 extern void macdrv_view_release_metal_view(WineMetalView *view);
+extern void macdrv_set_view_client_surface(WineContentView *view, void *client_surface);
 extern WineMetalSwapChain_id macdrv_create_view_swapchain(WineContentView *view);
 extern WineMetalSwapChain_id macdrv_create_offscreen_swapchain(void* hwnd, CGRect bounds);
 extern CAMetalLayer *macdrv_swapchain_get_layer(WineMetalSwapChain_id swapchain);
