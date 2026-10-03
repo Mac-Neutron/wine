@@ -3120,7 +3120,7 @@ done:
 static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_PTR limit_low,
                                          ULONG_PTR limit_high, SIZE_T commit_size,
                                          const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr,
-                                         ULONG alloc_type, ULONG protect, USHORT machine )
+                                         ULONG alloc_type, ULONG protect, USHORT machine, ULONG attributes )
 {
     unsigned int res;
     mem_size_t full_size;
@@ -3203,6 +3203,8 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
     }
     if (!(size = ROUND_SIZE( 0, size, page_mask ))) return STATUS_INVALID_PARAMETER;  /* wrap-around */
 
+    if (!arm64ec_view && (attributes & MEM_EXTENDED_PARAMETER_EC_CODE)) return STATUS_INVALID_PARAMETER;
+
     get_vprot_flags( protect, &vprot, FALSE );
     vprot |= sec_flags;
     if (!(sec_flags & SEC_RESERVE)) vprot |= VPROT_COMMITTED;
@@ -3238,6 +3240,12 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
     {
         *addr_ptr = view->base;
         *size_ptr = size;
+        /* a view of ARM64EC code, marked as allocate_virtual_memory marks it */
+        if (attributes & MEM_EXTENDED_PARAMETER_EC_CODE)
+        {
+            commit_arm64ec_map( view );
+            set_arm64ec_range( view->base, size );
+        }
         VIRTUAL_DEBUG_DUMP_VIEW( view );
     }
     else delete_view( view );
@@ -6034,7 +6042,7 @@ NTSTATUS WINAPI NtMapViewOfSection( HANDLE handle, HANDLE process, PVOID *addr_p
     }
 
     return virtual_map_section( handle, addr_ptr, 0, get_zero_bits_limit( zero_bits ), commit_size,
-                                offset_ptr, size_ptr, alloc_type, protect, 0 );
+                                offset_ptr, size_ptr, alloc_type, protect, 0, 0 );
 }
 
 /***********************************************************************
@@ -6112,7 +6120,7 @@ NTSTATUS WINAPI NtMapViewOfSectionEx( HANDLE handle, HANDLE process, PVOID *addr
     }
 
     return virtual_map_section( handle, addr_ptr, limit_low, limit_high, 0,
-                                offset_ptr, size_ptr, alloc_type, protect, machine );
+                                offset_ptr, size_ptr, alloc_type, protect, machine, attributes );
 }
 
 
