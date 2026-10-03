@@ -2101,6 +2101,60 @@ static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs
     return regidx;
 }
 
+#elif defined(__APPLE__)
+
+/* A field is the highest level of a feature that has_feature reports. */
+static UINT64 id_field( unsigned int shift, const char *level1, const char *level2 )
+{
+    if (level2 && has_feature( level2 )) return (UINT64)2 << shift;
+    if (level1 && has_feature( level1 )) return (UINT64)1 << shift;
+    return 0;
+}
+
+static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs,
+                                     WORD logical_thread_id )
+{
+    DWORD regidx = 0;
+
+    /* macOS doesn't let user space read the ID registers: build the fields FEX and
+     * Windows code check from the hw.optional.arm.FEAT_* sysctls, at the Arm ARM's
+     * field positions. Every core reports the same values. There is no CTR_EL0
+     * (CP 5801): reading it is a SIGILL on macOS. */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4000, (UINT64)0x61 << 24 }; /* MIDR_EL1: Apple, part 0 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4020, 0 }; /* ID_AA64PFR0_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4021, 0 }; /* ID_AA64PFR1_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4024, 0 }; /* ID_AA64ZFR0_EL1 */
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4030, /* ID_AA64ISAR0_EL1 */
+        id_field( 4, "FEAT_AES", "FEAT_PMULL" ) |
+        id_field( 8, "FEAT_SHA1", NULL ) |
+        id_field( 12, "FEAT_SHA256", "FEAT_SHA512" ) |
+        id_field( 16, "FEAT_CRC32", NULL ) |
+        id_field( 20, NULL, "FEAT_LSE" ) |
+        id_field( 32, "FEAT_SHA3", NULL ) |
+        id_field( 44, "FEAT_DotProd", NULL ) |
+        id_field( 48, "FEAT_FHM", NULL ) |
+        id_field( 52, "FEAT_FlagM", "FEAT_FlagM2" ) };
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4031, /* ID_AA64ISAR1_EL1 */
+        id_field( 16, "FEAT_FCMA", NULL ) |
+        id_field( 20, "FEAT_LRCPC", "FEAT_LRCPC2" ) |
+        id_field( 32, "FEAT_FRINTTS", NULL ) |
+        id_field( 44, "FEAT_BF16", NULL ) |
+        id_field( 52, "FEAT_I8MM", NULL ) };
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4032, /* ID_AA64ISAR2_EL1 */
+        id_field( 0, NULL, "FEAT_WFxT" ) |    /* 1 is reserved */
+        id_field( 4, "FEAT_RPRES", NULL ) |
+        id_field( 52, "FEAT_CSSC", NULL ) };
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4038, /* ID_AA64MMFR0_EL1 */
+        /* 2 only adds CNTPOFF_EL2, which user code can't reach, but FEX
+         * needs 2 to read CNTVCTSS_EL0 */
+        id_field( 60, NULL, "FEAT_ECV" ) };
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4039, /* ID_AA64MMFR1_EL1 */
+        id_field( 44, "FEAT_AFP", NULL ) };
+    regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x403a, /* ID_AA64MMFR2_EL1 */
+        id_field( 32, "FEAT_LSE2", NULL ) }; /* AT */
+    return regidx;
+}
+
 #else
 
 static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs,
