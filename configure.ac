@@ -998,6 +998,11 @@ case $host_os in
             WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000"],
            [wine_use_preloader=yes])
         ;;
+      aarch64)
+        dnl arm64 kills a binary with a custom pagezero or segalign: keep only the info plist
+        WINELOADER_LDFLAGS="-Wl,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
+        wine_use_preloader=no
+        ;;
       *)    wine_use_preloader=no ;;
     esac
 
