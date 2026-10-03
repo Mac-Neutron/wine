@@ -65,6 +65,8 @@
 # include <CoreServices/CoreServices.h>
 # undef LoadResource
 # undef GetCurrentThread
+# include <Security/SecCode.h>
+# include <Security/SecStaticCode.h>
 # include <pthread.h>
 # include <mach/mach.h>
 # include <mach/mach_error.h>
@@ -90,6 +92,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(module);
+WINE_DECLARE_DEBUG_CHANNEL(process);
 
 #if defined __i386__ || (defined __x86_64__ && !defined __APPLE__)
 #define SO_DLLS_SUPPORTED
@@ -380,6 +383,38 @@ static void set_config_dir(void)
     }
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/* Whether the loader at path is signed with com.apple.developer.cross-architecture-support. Without it the kernel
+ * ignores the 4K page attribute and kills the exec (no message), and can't map KUSER_SHARED_DATA either.
+ * Asked once, about wineloader, from init_paths: Security.framework is not safe to call in a forked child, and
+ * exec_wineloader runs in one. Every later ask, with whatever path, gets that answer: a runtime's loaders are
+ * signed alike. */
+static BOOL loader_is_entitled( const char *path )
+{
+    static int entitled = -1;
+    CFURLRef url;
+    SecStaticCodeRef code = NULL;
+    CFDictionaryRef info = NULL, entitlements;
+    CFTypeRef value;
+
+    if (entitled >= 0) return entitled;
+    entitled = 0;
+    if (!(url = CFURLCreateFromFileSystemRepresentation( NULL, (const UInt8 *)path, strlen( path ), false )))
+        return FALSE;
+    if (!SecStaticCodeCreateWithPath( url, kSecCSDefaultFlags, &code ) &&
+        !SecCodeCopySigningInformation( code, kSecCSSigningInformation, &info ) &&
+        (entitlements = CFDictionaryGetValue( info, kSecCodeInfoEntitlementsDict )) &&
+        CFGetTypeID( entitlements ) == CFDictionaryGetTypeID() &&
+        (value = CFDictionaryGetValue( entitlements, CFSTR("com.apple.developer.cross-architecture-support") )) &&
+        CFGetTypeID( value ) == CFBooleanGetTypeID())
+        entitled = CFBooleanGetValue( value );
+    if (info) CFRelease( info );
+    if (code) CFRelease( code );
+    CFRelease( url );
+    return entitled;
+}
+#endif
+
 static void init_paths(void)
 {
     Dl_info info;
@@ -399,6 +434,9 @@ static void init_paths(void)
         data_dir = build_relative_path( dll_dir, LIBDIR "/wine", DATADIR "/wine" );
         wineloader = build_path( ntdll_dir, "wine" );
     }
+#if defined(__APPLE__) && defined(__aarch64__)
+    loader_is_entitled( wineloader );  /* before any fork */
+#endif
 
     set_dll_path();
     set_system_dll_path();
@@ -455,13 +493,23 @@ static void preloader_exec( char **argv )
 #if defined(__APPLE__) && defined(__aarch64__)
     {
         /* exec with 4K pages; the kernel only honors this for a loader signed with
-         * com.apple.developer.cross-architecture-support, an unentitled target is SIGKILLed; patch 7 checks first */
+         * com.apple.developer.cross-architecture-support, an unentitled target is SIGKILLed: say so instead */
         posix_spawnattr_t attr;
+        int ret;
+
+        if (!loader_is_entitled( argv[1] ))
+            fatal_error( "%s lacks the com.apple.developer.cross-architecture-support entitlement; "
+                         "re-sign the runtime (wine-arm64/bundle.sh)\n", argv[1] );
         posix_spawnattr_init( &attr );
         posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETEXEC );
         posix_spawnattr_set_4k_page_size_np( &attr );
-        posix_spawn( NULL, argv[1], NULL, &attr, argv + 1, *_NSGetEnviron() );
+        ret = posix_spawn( NULL, argv[1], NULL, &attr, argv + 1, *_NSGetEnviron() );
         posix_spawnattr_destroy( &attr );
+        /* POSIX_SPAWN_SETEXEC: posix_spawn returns only when the exec failed. A 16K process is not a fallback, so
+         * no execv below. The callers know what to do: loader_exec tries the next loader, the forked grandchild of
+         * exec_wineloader _exit()s (fatal_error's exit() isn't safe there), reexec_loader calls fatal_error */
+        ERR_(process)( "posix_spawn %s: %s\n", argv[1], strerror( ret ) );
+        return;
     }
 #endif
     execv( argv[1], argv + 1 );
