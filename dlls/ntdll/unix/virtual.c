@@ -94,6 +94,9 @@
 WINE_DEFAULT_DEBUG_CHANNEL(virtual);
 WINE_DECLARE_DEBUG_CHANNEL(module);
 WINE_DECLARE_DEBUG_CHANNEL(virtual_ranges);
+#if defined(__APPLE__) && defined(__aarch64__)
+WINE_DECLARE_DEBUG_CHANNEL(wxflip);
+#endif
 
 struct preload_info
 {
@@ -4787,7 +4790,10 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, 
             (get_unix_prot( get_page_vprot( addr )) & PROT_WRITE))
         {
             if (!mprotect( page, host_page_size, get_unix_prot( vprot ) & ~PROT_EXEC ))
+            {
+                TRACE_(wxflip)( "%p -> rw\n", page );
                 ret = STATUS_SUCCESS;
+            }
         }
 #endif
     }
@@ -4797,7 +4803,10 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, 
     {
         /* W^X-degraded host page currently read-write: flip it to read-exec */
         if (!mprotect( page, host_page_size, get_unix_prot( vprot ) & ~PROT_WRITE ))
+        {
+            TRACE_(wxflip)( "%p -> rx\n", page );
             ret = STATUS_SUCCESS;
+        }
     }
 #endif
     mutex_unlock( &virtual_mutex );
