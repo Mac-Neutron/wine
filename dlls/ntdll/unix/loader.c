@@ -452,6 +452,18 @@ static void preloader_exec( char **argv )
     execv( argv[0], argv );
     free( argv[0] );
 #endif
+#if defined(__APPLE__) && defined(__aarch64__)
+    {
+        /* exec with 4K pages; the kernel only honors this for a loader signed with
+         * com.apple.developer.cross-architecture-support, an unentitled target is SIGKILLed; patch 7 checks first */
+        posix_spawnattr_t attr;
+        posix_spawnattr_init( &attr );
+        posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETEXEC );
+        posix_spawnattr_set_4k_page_size_np( &attr );
+        posix_spawn( NULL, argv[1], NULL, &attr, argv + 1, *_NSGetEnviron() );
+        posix_spawnattr_destroy( &attr );
+    }
+#endif
     execv( argv[1], argv + 1 );
 }
 
