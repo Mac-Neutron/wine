@@ -1394,6 +1394,8 @@ BOOLEAN WINAPI RtlIsEcCode( ULONG_PTR ptr )
 {
     const UINT64 *map = (const UINT64 *)NtCurrentTeb()->Peb->EcCodeBitMap;
     ULONG_PTR page = ptr / page_size;
+    /* the map covers only the 47-bit user address space */
+    if (!map || ptr >= 0x800000000000) return FALSE;
     return (map[page / 64] >> (page & 63)) & 1;
 }
 
@@ -1899,6 +1901,8 @@ static void __attribute__((naked)) arm64x_check_call(void)
     asm( ".seh_proc \"#arm64x_check_call\"\n\t"
          ".seh_endprologue\n\t"
          /* check for EC code */
+         "lsr x16, x11, #47\n\t"            /* dest beyond the map: not EC code */
+         "cbnz x16, .Lexit\n\t"
          "ldr x16, [x18, #0x60]\n\t"        /* peb */
          "lsr x17, x11, #18\n\t"            /* dest / page_size / 64 */
          "ldr x16, [x16, #0x368]\n\t"       /* peb->EcCodeBitMap */
