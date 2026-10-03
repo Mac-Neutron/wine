@@ -2050,6 +2050,10 @@ static int pre_exec(void)
     }
 #ifdef HAVE_WINE_PRELOADER
     return 1;
+#elif defined(__aarch64__)
+    /* the first process starts with the host's 16K pages: exec once with 4K (preloader_exec checks the entitlement
+     * first), so that every entry point, a game, wineboot or winepath, runs 4K like the processes it starts */
+    return getpagesize() != 0x1000;
 #else
     return 0;
 #endif
