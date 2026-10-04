@@ -58,7 +58,6 @@
 #include "wine/asm.h"
 #include "unix_private.h"
 #ifdef __APPLE__
-# include <dlfcn.h>
 # include <os/arch/arm64.h>
 #endif
 #include "wine/debug.h"
@@ -1558,16 +1557,17 @@ static void usr2_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
 /**********************************************************************
  *           x18_toggle_trap
  *
- * Whether a SIGTRAP is os_set_custom_x18_abi_enabled's brk #1: a toggle to the mode already set.
+ * Whether a SIGTRAP is os_set_custom_x18_abi_enabled's brk #1: a toggle to the mode already set. The brks sit at
+ * +0x58 and +0x78 in the routine (macOS 27); its address is taken at init, so the handler only compares.
  */
+static ULONG_PTR x18_toggle_pc;
+
 static BOOL x18_toggle_trap( ucontext_t *sigcontext )
 {
     DWORD64 esr = get_fault_esr( sigcontext );
-    Dl_info info;
 
     return ESR_ELx_EC(esr) == ESR_ELx_EC_BRK64 && ESR_ELx_ISS_BRK_COMMENT(esr) == 1 &&
-           dladdr( (void *)PC_sig(sigcontext), &info ) &&
-           info.dli_saddr == (void *)os_set_custom_x18_abi_enabled;
+           PC_sig(sigcontext) - x18_toggle_pc < 0x100;
 }
 
 
@@ -1669,6 +1669,9 @@ void signal_init_process( TEB *teb )
     sig_act.sa_mask = server_block_set;
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
 
+#ifdef __APPLE__
+    x18_toggle_pc = (ULONG_PTR)os_set_custom_x18_abi_enabled;  /* before SIGTRAP is handled */
+#endif
     sig_act.sa_sigaction = X18_HANDLER( int_handler );
     if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
     sig_act.sa_sigaction = X18_HANDLER( fpe_handler );
