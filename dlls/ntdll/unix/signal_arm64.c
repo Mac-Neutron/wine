@@ -933,19 +933,23 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "mov x19, x4\n\t"              /* teb */
                    "mov x20, x0\n\t"              /* user_sp */
                    "mov x21, x3\n\t"              /* func */
-                   "mov sp, x1\n\t"               /* below the new frame for the calls */
                    "ldr w11, [x19, #0x380]\n\t"   /* thread_data->syscall_trace */
-                   "cbz x11, 1f\n\t"
-                   "ldr x1, [x20]\n\t"            /* args */
-                   "ldp w2, w0, [x20, #8]\n\t"    /* len, id */
-                   "str x0, [x29, #0xc0]\n\t"     /* id */
-                   "bl " __ASM_NAME("trace_usercall") "\n"
+                   "cbnz x11, 2f\n"
+                   /* the toggle on the old sp: sp never sits at or below the new frame, which holds only prev_frame
+                    * and syscall_cfa, so a suspend here (not inside a syscall) saves the signal context instead */
                    "1:\t" X18_TOGGLE(1)
                    "mov x18, x19\n\t"             /* teb */
                    /* switch to user stack */
                    "mov sp, x20\n\t"              /* user_sp */
                    __ASM_LOCAL_LABEL("call_user_mode_callback_user_stack") ":\n\t"
-                   "br x21" )
+                   "br x21\n"
+                   "2:\tmov sp, x1\n\t"
+                   "ldr x1, [x20]\n\t"            /* args */
+                   "ldp w2, w0, [x20, #8]\n\t"    /* len, id */
+                   "str x0, [x29, #0xc0]\n\t"     /* id */
+                   "bl " __ASM_NAME("trace_usercall") "\n\t"
+                   "mov sp, x29\n\t"              /* back to the old sp for the toggle */
+                   "b 1b" )
 
 
 /***********************************************************************
@@ -1676,6 +1680,11 @@ void signal_init_process( TEB *teb )
         const char *selftest = getenv( "WINE_X18_SELFTEST" );
         x18_selftest = selftest && !strcmp( selftest, "double_on" );  /* before SIGTRAP is handled */
     }
+    /* x18_toggle_trap's 0x80 window assumes the toggle's brk #1 at +0x58 and +0x78 */
+    if (*(const UINT *)((ULONG_PTR)os_set_custom_x18_abi_enabled + 0x58) != 0xd4200020 ||
+        *(const UINT *)((ULONG_PTR)os_set_custom_x18_abi_enabled + 0x78) != 0xd4200020)
+        ERR( "os_set_custom_x18_abi_enabled has no brk #1 at +0x58 and +0x78: an unbalanced x18 toggle may not be "
+             "recognised\n" );
 #endif
     sig_act.sa_sigaction = X18_HANDLER( int_handler );
     if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
