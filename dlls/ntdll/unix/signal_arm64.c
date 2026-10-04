@@ -1554,20 +1554,21 @@ static void usr2_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
 
 
 #ifdef __APPLE__
+/* WINE_X18_SELFTEST=double_on, read once at init: the x18 check's T3 */
+static BOOL x18_selftest;
+
 /**********************************************************************
  *           x18_toggle_trap
  *
- * Whether a SIGTRAP is os_set_custom_x18_abi_enabled's brk #1: a toggle to the mode already set. The brks sit at
- * +0x58 and +0x78 in the routine (macOS 27); its address is taken at init, so the handler only compares.
+ * Whether a SIGTRAP is os_set_custom_x18_abi_enabled's brk #1: a toggle to the mode already set. On macOS 27 the
+ * routine is 0x7c bytes, with its brks at +0x58 and +0x78. Its address is a GOT read, safe in a signal handler.
  */
-static ULONG_PTR x18_toggle_pc;
-
 static BOOL x18_toggle_trap( ucontext_t *sigcontext )
 {
     DWORD64 esr = get_fault_esr( sigcontext );
 
     return ESR_ELx_EC(esr) == ESR_ELx_EC_BRK64 && ESR_ELx_ISS_BRK_COMMENT(esr) == 1 &&
-           PC_sig(sigcontext) - x18_toggle_pc < 0x100;
+           PC_sig(sigcontext) - (ULONG_PTR)os_set_custom_x18_abi_enabled < 0x80;
 }
 
 
@@ -1583,6 +1584,7 @@ static void x18_call( void (*handler)( int, siginfo_t *, void * ), BOOL keep, in
                       void *_sigcontext )
 {
     static const char off_msg[] = "x18: PE stack running OFF\n";
+    static const char selftest_msg[] = "x18: toggle trap passed through (self-test)\n";
     ucontext_t *sigcontext = _sigcontext;
     ULONG_PTR pc = PC_sig(sigcontext), sp = SP_sig(sigcontext);
     BOOL was_on = os_custom_x18_abi_enabled(), on;
@@ -1591,6 +1593,11 @@ static void x18_call( void (*handler)( int, siginfo_t *, void * ), BOOL keep, in
     if (was_on) os_set_custom_x18_abi_enabled( false );  /* before any libc call */
     if (sig == SIGTRAP && x18_toggle_trap( sigcontext ))
     {
+        if (x18_selftest)  /* T3: the same verdict, without a crash report or dialog */
+        {
+            write( 2, selftest_msg, sizeof(selftest_msg) - 1 );
+            _exit( 133 );
+        }
         signal( SIGTRAP, SIG_DFL );  /* the brk runs again on return, and kills the process */
         return;
     }
@@ -1670,7 +1677,10 @@ void signal_init_process( TEB *teb )
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
 
 #ifdef __APPLE__
-    x18_toggle_pc = (ULONG_PTR)os_set_custom_x18_abi_enabled;  /* before SIGTRAP is handled */
+    {
+        const char *selftest = getenv( "WINE_X18_SELFTEST" );
+        x18_selftest = selftest && !strcmp( selftest, "double_on" );  /* before SIGTRAP is handled */
+    }
 #endif
     sig_act.sa_sigaction = X18_HANDLER( int_handler );
     if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
@@ -1692,8 +1702,8 @@ void signal_init_process( TEB *teb )
     sig_act.sa_sigaction = X18_HANDLER( ill_handler );
     if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
 #ifdef __APPLE__
-    /* T3 of the x18 check: an unbalanced toggle has to kill the process by SIGTRAP */
-    if (getenv( "WINE_X18_SELFTEST" ) && !strcmp( getenv( "WINE_X18_SELFTEST" ), "double_on" ))
+    /* T3 of the x18 check: an unbalanced toggle has to reach the toggle's trap */
+    if (x18_selftest)
     {
         os_set_custom_x18_abi_enabled( true );
         os_set_custom_x18_abi_enabled( true );
