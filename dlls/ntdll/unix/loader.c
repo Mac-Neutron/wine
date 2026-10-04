@@ -88,6 +88,7 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
+#include "msync.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 
@@ -1916,6 +1917,7 @@ static void start_main_thread(void)
     struct thread_data *data = virtual_alloc_first_thread_data();
 
     server_init_process( data );
+    msync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
