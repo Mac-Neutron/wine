@@ -539,6 +539,14 @@ static void *request_shm_from_server( int entry, int tid )
     if (mr != MACH_MSG_SUCCESS)
     {
         ERR( "Failed to send/receive shm map request: %#x\n", mr );
+        mach_port_deallocate( mach_task_self(), reply_port );
+        return NULL;  /* receive_message holds no new entry: don't map or release it */
+    }
+
+    if (receive_message.descriptor.name == MACH_PORT_NULL)
+    {
+        /* the server couldn't make the entry; mapping MACH_PORT_NULL would give private zeroed memory */
+        ERR( "Server sent no shm entry for %d\n", entry );
     }
     else
     {
@@ -582,7 +590,11 @@ static void *get_shm_slow( unsigned int idx )
     {
         void *addr = request_shm_from_server( entry, 0 );
         if (!addr)
+        {
+            /* every caller dereferences the result */
             ERR("Failed to map page %d (offset %#lx).\n", entry, entry * pagesize);
+            abort_process( 1 );
+        }
 
         TRACE("Mapping page %d at %p.\n", entry, addr);
 
