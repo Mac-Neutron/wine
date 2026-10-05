@@ -3930,7 +3930,7 @@ static void output_module( struct makefile *make, unsigned int arch )
     struct strarray imports = make->imports;
     const char *p, *module_name;
     char *spec_file = NULL;
-    unsigned int link_arch;
+    unsigned int link_arch, res_arch;
 
     if (!make->is_exe)
     {
@@ -3979,12 +3979,15 @@ static void output_module( struct makefile *make, unsigned int arch )
                            strmake( "$(libdir)/wine/%s", arch_pe_dirs[arch] ), NULL );
     }
 
+    /* a module built for the hybrid arch only has its resources there */
+    res_arch = make->disabled[arch] ? link_arch : arch;
+
     strarray_add( &make->all_targets[link_arch], module_name );
     output( "%s:", obj_dir_path( make, module_name ));
     if (spec_file) output_filename( spec_file );
     output_filenames_obj_dir( make, make->object_files[arch] );
     if (link_arch != arch) output_filenames_obj_dir( make, make->object_files[link_arch] );
-    output_filenames_obj_dir( make, make->res_files[arch] );
+    output_filenames_obj_dir( make, make->res_files[res_arch] );
     output_filenames( dep_libs );
     output_filename( winebuild );
     output_filename( winegcc );
@@ -4004,7 +4007,7 @@ static void output_module( struct makefile *make, unsigned int arch )
     if (link_arch) output_filenames( get_expanded_arch_var_array( make, "EXTRADLLFLAGS", link_arch ));
     output_filenames_obj_dir( make, make->object_files[arch] );
     if (link_arch != arch) output_filenames_obj_dir( make, make->object_files[link_arch] );
-    output_filenames_obj_dir( make, make->res_files[arch] );
+    output_filenames_obj_dir( make, make->res_files[res_arch] );
     output_debug_files( make, module_name, link_arch );
     output_filenames( all_libs );
     output_filename( arch_make_variable( "LDFLAGS", link_arch ));
