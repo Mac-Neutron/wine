@@ -1265,6 +1265,48 @@ static struct wine_rb_entry *find_view_inside_range( void **base_ptr, void **end
 }
 
 
+#ifdef __APPLE__
+/***********************************************************************
+ *           skip_host_region
+ *
+ * After a fixed mapping of [start, start + size) failed, return the next
+ * candidate past the host region in the way: the first one at or above
+ * start, which Wine doesn't track as a view (dyld's shared cache, the
+ * loader's and the host libraries' allocations). Bottom-up, its end rounded
+ * up; top-down, its start minus size rounded down: every candidate in
+ * between overlaps it. Returns start + step if no region overlaps.
+ */
+static void *skip_host_region( void *start, size_t size, ptrdiff_t step )
+{
+    size_t align_mask = (step > 0 ? step : -step) - 1;
+    mach_vm_address_t address = (mach_vm_address_t)start, next;
+    mach_vm_size_t region_size;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t dummy_object_name = MACH_PORT_NULL;
+
+    if (mach_vm_region( mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
+                        (vm_region_info_t)&info, &count, &dummy_object_name ) ||
+        address >= (mach_vm_address_t)start + size)
+        return (char *)start + step;
+
+    if (step > 0)
+    {
+        next = (address + region_size + align_mask) & ~(mach_vm_address_t)align_mask;
+        if (next <= (mach_vm_address_t)start) return NULL;  /* wrapped */
+    }
+    else
+    {
+        if (address < size) return NULL;
+        next = (address - size) & ~(mach_vm_address_t)align_mask;
+    }
+    TRACE( "skipping host region %p-%p, next %p.\n", (void *)address,
+           (void *)(address + region_size), (void *)next );
+    return (void *)next;
+}
+#endif
+
+
 /***********************************************************************
  *           try_map_free_area
  *
@@ -1288,7 +1330,13 @@ static void* try_map_free_area( void *base, void *end, ptrdiff_t step,
             (step < 0 && (char *)start - (char *)base < -step) ||
             step == 0)
             break;
+#ifdef __APPLE__
+        /* one fixed mach_vm_map per granularity step through a host region
+         * of gigabytes costs seconds: skip it whole */
+        start = skip_host_region( start, size, step );
+#else
         start = (char *)start + step;
+#endif
     }
 
     return NULL;
