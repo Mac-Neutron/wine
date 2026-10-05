@@ -1,0 +1,7 @@
+MODULE = libxess.dll
+
+VER_FILEDESCRIPTION_STR = "Wine XeSS stand-in"
+VER_PRODUCTVERSION      = 2,0,1,0
+
+SOURCES = \
+	main.c
