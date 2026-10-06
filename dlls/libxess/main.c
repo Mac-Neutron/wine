@@ -20,7 +20,8 @@
 
 /* XeSS's path for GPUs other than Intel's is built on DP4a, which Apple GPUs emulate
  * at ~4 FPS. These stand-ins report every device as unsupported, so games fall back to
- * another upscaler. Each export ignores the arguments it doesn't name below. */
+ * another upscaler; libxess.dll's D3D12 calls are answered by MetalFX instead (d3d12.c).
+ * Each export ignores the arguments it doesn't name below. */
 
 #include <stdarg.h>
 #include <stdint.h>
