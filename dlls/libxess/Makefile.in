@@ -2,6 +2,7 @@ MODULE = libxess.dll
 
 VER_FILEDESCRIPTION_STR = "Wine XeSS on MetalFX"
 VER_PRODUCTVERSION      = 2,0,1,0
+IMPORTS   = dxguid
 
 SOURCES = \
 	d3d12.c \
