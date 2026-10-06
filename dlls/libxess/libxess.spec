@@ -1,5 +1,5 @@
 # The exports of Intel's libxess.dll (XeSS SDK 2.0.1), in its order. Arguments are listed only
-# where the stand-in reads them (main.c).
+# where the stand-ins read them (main.c) or the D3D12 bridge implements the call (d3d12.c).
 @ cdecl INTC_D3D11_XessCreateContext() xess_unsupported
 @ cdecl INTC_D3D11_XessDestroyContext() xess_unsupported
 @ cdecl INTC_D3D11_XessExecute() xess_unsupported
@@ -28,35 +28,35 @@
 @ cdecl INTC_D3D12_RegisterDriverCallbacks() xess_unsupported
 @ cdecl xessAILGetDecision() xess_unsupported
 @ cdecl xessAILGetVersion() xess_unsupported
-@ cdecl xessD3D12BuildPipelines() xess_invalid_context
-@ cdecl xessD3D12CreateContext(ptr ptr) xess_create_context
-@ cdecl xessD3D12Execute() xess_invalid_context
-@ cdecl xessD3D12GetInitParams() xess_invalid_context
+@ cdecl xessD3D12BuildPipelines(ptr ptr long long) d3d12_build_pipelines
+@ cdecl xessD3D12CreateContext(ptr ptr) d3d12_create_context
+@ cdecl xessD3D12Execute(ptr ptr ptr) d3d12_execute
+@ cdecl xessD3D12GetInitParams(ptr ptr) d3d12_get_init_params
 @ cdecl xessD3D12GetProfilingData() xess_invalid_context
 @ cdecl xessD3D12GetResourcesToDump() xess_invalid_context
-@ cdecl xessD3D12Init() xess_invalid_context
-@ cdecl xessDestroyContext(ptr)
+@ cdecl xessD3D12Init(ptr ptr) d3d12_init
+@ cdecl xessDestroyContext(ptr) d3d12_destroy_context
 @ cdecl xessForceLegacyScaleFactors() xess_invalid_context
 @ cdecl xessGetContextParameterP() xess_invalid_context
 @ cdecl xessGetExposureMultiplier() xess_invalid_context
-@ cdecl xessGetInputResolution() xess_invalid_context
-@ cdecl xessGetIntelXeFXVersion() xess_invalid_context
-@ cdecl xessGetJitterScale() xess_invalid_context
+@ cdecl xessGetInputResolution(ptr ptr long ptr) d3d12_get_input_resolution
+@ cdecl xessGetIntelXeFXVersion(ptr ptr) d3d12_get_xefx_version
+@ cdecl xessGetJitterScale(ptr ptr ptr) d3d12_get_jitter_scale
 @ cdecl xessGetMaxResponsiveMaskValue() xess_invalid_context
-@ cdecl xessGetOptimalInputResolution() xess_invalid_context
-@ cdecl xessGetPipelineBuildStatus() xess_invalid_context
+@ cdecl xessGetOptimalInputResolution(ptr ptr long ptr ptr ptr) d3d12_get_optimal_input_resolution
+@ cdecl xessGetPipelineBuildStatus(ptr) d3d12_get_pipeline_build_status
 @ cdecl xessGetProfilingData() xess_invalid_context
-@ cdecl xessGetProperties() xess_invalid_context
-@ cdecl xessGetVelocityScale() xess_invalid_context
+@ cdecl xessGetProperties(ptr ptr ptr) d3d12_get_properties
+@ cdecl xessGetVelocityScale(ptr ptr ptr) d3d12_get_velocity_scale
 @ cdecl xessGetVersion(ptr)
-@ cdecl xessIsOptimalDriver() xess_unsupported
+@ cdecl xessIsOptimalDriver(ptr) d3d12_is_optimal_driver
 @ cdecl xessSelectNetworkModel() xess_invalid_context
 @ cdecl xessSetContextParameterF() xess_invalid_context
 @ cdecl xessSetExposureMultiplier() xess_invalid_context
-@ cdecl xessSetJitterScale() xess_invalid_context
-@ cdecl xessSetLoggingCallback() xess_invalid_context
+@ cdecl xessSetJitterScale(ptr float float) d3d12_set_jitter_scale
+@ cdecl xessSetLoggingCallback(ptr long ptr) d3d12_set_logging_callback
 @ cdecl xessSetMaxResponsiveMaskValue() xess_invalid_context
-@ cdecl xessSetVelocityScale() xess_invalid_context
+@ cdecl xessSetVelocityScale(ptr float float) d3d12_set_velocity_scale
 @ cdecl xessStartDump() xess_invalid_context
 @ cdecl xessTrinityCreateContext() xess_unsupported
 @ cdecl xessTrinityGetRequiredDeviceExtensions() xess_unsupported
