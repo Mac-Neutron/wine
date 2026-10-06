@@ -76,11 +76,11 @@ static SRWLOCK contexts_lock = SRWLOCK_INIT;
 static struct list contexts = LIST_INIT(contexts);
 
 /* The context behind a handle, locked; NULL for a handle that isn't one.
- * ponytail: the list lock is held (shared) while waiting for the context's lock, so a destroy (it takes the list
- * lock exclusively) and the lookups queued behind it wait for the one call inside that context: recording an
- * upscale, or at most one ~13 ms upscaler creation; never a GPU wait, and never a deadlock (always list, then
- * context). A reference count taken under the list lock would let go of it first; worth it only if a game's
- * threads show that wait. */
+ * ponytail: a lookup holds the list lock (shared) while it waits for the context's lock, so a destroy (it takes the
+ * list lock exclusively), and the lookups queued behind its exclusive request, wait for every call whose lookup
+ * already holds the list lock, each recording one pass or at most one ~13 ms upscaler creation; never a GPU wait,
+ * and never a deadlock (always list, then context). A reference count taken under the list lock would let go of it
+ * first; worth it only if a game's threads show that wait. */
 static struct xess_d3d12 *lock_context(xess_context_handle_t handle)
 {
     struct xess_d3d12 *ctx;
