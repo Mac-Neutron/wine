@@ -113,12 +113,14 @@ static void once(LONG *flag, char *msg, const char *format, ...)
 
 static xess_result_t unlock_context(struct xess_d3d12 *ctx, xess_result_t ret, const char *msg)
 {
-    xess_app_log_callback_t log = ctx->log_level <= XESS_LOGGING_LEVEL_WARNING ? ctx->log : NULL;
+    /* a message comes with a refusal: ERROR for the game's callback when the call failed */
+    xess_logging_level_t level = ret < 0 ? XESS_LOGGING_LEVEL_ERROR : XESS_LOGGING_LEVEL_WARNING;
+    xess_app_log_callback_t log = ctx->log_level <= level ? ctx->log : NULL;
 
     ReleaseSRWLockExclusive(&ctx->lock);
     if (!*msg) return ret;
     WARN("%s\n", msg);
-    if (log) log(msg, XESS_LOGGING_LEVEL_WARNING);
+    if (log) log(msg, level);
     return ret;
 }
 
@@ -161,12 +163,14 @@ static float ratio_of(xess_quality_settings_t quality)
     return 0;
 }
 
-/* `output` / `ratio` rounded down to even, within the device's range of output / input. */
+/* `output` / `ratio` rounded down to even (native AA's: the output, odd or not), within the device's range of
+ * output / input. */
 static uint32_t input_size(const struct xess_d3d12 *ctx, uint32_t output, float ratio)
 {
-    uint32_t in = (uint32_t)(output / ratio) & ~1u, lo = (uint32_t)ceilf(output / ctx->max_scale),
+    uint32_t in = (uint32_t)(output / ratio), lo = (uint32_t)ceilf(output / ctx->max_scale),
              hi = (uint32_t)(output / ctx->min_scale);
 
+    if (ratio != 1.0f) in &= ~1u;
     lo += lo & 1;
     return max(min(in, hi), lo);
 }
@@ -259,6 +263,8 @@ xess_result_t CDECL d3d12_build_pipelines(xess_context_handle_t handle, ID3D12Pi
     return unlock_context(ctx, XESS_RESULT_SUCCESS, "");
 }
 
+/* xess.h: SUCCESS between BuildPipelines and Init (built at once), WRONG_CALL_ORDER before BuildPipelines or after
+ * Init (which clears `built`). */
 xess_result_t CDECL d3d12_get_pipeline_build_status(xess_context_handle_t handle)
 {
     struct xess_d3d12 *ctx;
@@ -298,6 +304,7 @@ static xess_result_t init(struct xess_d3d12 *ctx, const xess_d3d12_init_params_t
     release_depth(ctx);
     ctx->init = *params;
     ctx->initialized = TRUE;
+    ctx->built = FALSE;
     return XESS_RESULT_SUCCESS;
 }
 
@@ -399,15 +406,19 @@ static xess_result_t execute(struct xess_d3d12 *ctx, ID3D12GraphicsCommandList *
     if (!ctx->initialized) return XESS_RESULT_ERROR_UNINITIALIZED;
     if (!list || !p || !p->pColorTexture || !p->pVelocityTexture || !p->pOutputTexture ||
         (!p->pDepthTexture && !(flags & XESS_INIT_FLAG_HIGH_RES_MV)) ||
+        (!p->pExposureScaleTexture && (flags & XESS_INIT_FLAG_EXPOSURE_SCALE_TEXTURE)) ||
+        (!p->pResponsivePixelMaskTexture && (flags & XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK)) ||
         !p->inputWidth || !p->inputHeight ||
         ctx->init.outputResolution.x > p->inputWidth * ctx->max_scale ||
         ctx->init.outputResolution.y > p->inputHeight * ctx->max_scale ||
         ctx->init.outputResolution.x < p->inputWidth * ctx->min_scale ||
         ctx->init.outputResolution.y < p->inputHeight * ctx->min_scale)
     {
-        once(&bad, msg, "xessD3D12Execute: list %p, params %p, colour %p, velocity %p, depth %p, output %p, input %ux%u",
-             list, p, p ? p->pColorTexture : NULL, p ? p->pVelocityTexture : NULL, p ? p->pDepthTexture : NULL,
-             p ? p->pOutputTexture : NULL, p ? p->inputWidth : 0, p ? p->inputHeight : 0);
+        once(&bad, msg, "xessD3D12Execute: list %p, params %p, flags %#x, colour %p, velocity %p, depth %p, exposure %p, "
+             "mask %p, output %p, input %ux%u", list, p, flags, p ? p->pColorTexture : NULL,
+             p ? p->pVelocityTexture : NULL, p ? p->pDepthTexture : NULL, p ? p->pExposureScaleTexture : NULL,
+             p ? p->pResponsivePixelMaskTexture : NULL, p ? p->pOutputTexture : NULL, p ? p->inputWidth : 0,
+             p ? p->inputHeight : 0);
         return XESS_RESULT_ERROR_INVALID_ARGUMENT;
     }
     reactive = flags & XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK ? p->pResponsivePixelMaskTexture : NULL;
@@ -616,7 +627,7 @@ xess_result_t CDECL d3d12_is_optimal_driver(xess_context_handle_t handle)
     return unlock_context(ctx, XESS_RESULT_SUCCESS, "");
 }
 
-/* Called with the bridge's WARN-level messages when `level` is WARNING or lower. */
+/* Called with the bridge's messages at or above `level`: a refused call's at ERROR. */
 xess_result_t CDECL d3d12_set_logging_callback(xess_context_handle_t handle, xess_logging_level_t level,
                                                xess_app_log_callback_t callback)
 {
@@ -626,6 +637,18 @@ xess_result_t CDECL d3d12_set_logging_callback(xess_context_handle_t handle, xes
     ctx->log = callback;
     ctx->log_level = level;
     return unlock_context(ctx, XESS_RESULT_SUCCESS, "");
+}
+
+/* The context calls MetalFX has nothing for (xess.h's exposure multiplier, responsive mask clip and legacy scale
+ * factors; xess_debug.h's network choice, dumps and profiling): NOT_IMPLEMENTED on a live context, as xess.h defines
+ * it, INVALID_CONTEXT on anything else. Nothing is read or written past the handle. */
+xess_result_t CDECL d3d12_not_implemented(xess_context_handle_t handle)
+{
+    struct xess_d3d12 *ctx;
+
+    TRACE("%p\n", handle);
+    if (!(ctx = lock_context(handle))) return XESS_RESULT_ERROR_INVALID_CONTEXT;
+    return unlock_context(ctx, XESS_RESULT_ERROR_NOT_IMPLEMENTED, "");
 }
 
 xess_result_t CDECL d3d12_set_jitter_scale(xess_context_handle_t handle, float x, float y)
