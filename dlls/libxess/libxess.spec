@@ -32,32 +32,32 @@
 @ cdecl xessD3D12CreateContext(ptr ptr) d3d12_create_context
 @ cdecl xessD3D12Execute(ptr ptr ptr) d3d12_execute
 @ cdecl xessD3D12GetInitParams(ptr ptr) d3d12_get_init_params
-@ cdecl xessD3D12GetProfilingData() xess_invalid_context
-@ cdecl xessD3D12GetResourcesToDump() xess_invalid_context
+@ cdecl xessD3D12GetProfilingData(ptr) d3d12_not_implemented
+@ cdecl xessD3D12GetResourcesToDump(ptr) d3d12_not_implemented
 @ cdecl xessD3D12Init(ptr ptr) d3d12_init
 @ cdecl xessDestroyContext(ptr) d3d12_destroy_context
-@ cdecl xessForceLegacyScaleFactors() xess_invalid_context
+@ cdecl xessForceLegacyScaleFactors(ptr) d3d12_not_implemented
 @ cdecl xessGetContextParameterP() xess_invalid_context
-@ cdecl xessGetExposureMultiplier() xess_invalid_context
+@ cdecl xessGetExposureMultiplier(ptr) d3d12_not_implemented
 @ cdecl xessGetInputResolution(ptr ptr long ptr) d3d12_get_input_resolution
 @ cdecl xessGetIntelXeFXVersion(ptr ptr) d3d12_get_xefx_version
 @ cdecl xessGetJitterScale(ptr ptr ptr) d3d12_get_jitter_scale
-@ cdecl xessGetMaxResponsiveMaskValue() xess_invalid_context
+@ cdecl xessGetMaxResponsiveMaskValue(ptr) d3d12_not_implemented
 @ cdecl xessGetOptimalInputResolution(ptr ptr long ptr ptr ptr) d3d12_get_optimal_input_resolution
 @ cdecl xessGetPipelineBuildStatus(ptr) d3d12_get_pipeline_build_status
-@ cdecl xessGetProfilingData() xess_invalid_context
+@ cdecl xessGetProfilingData(ptr) d3d12_not_implemented
 @ cdecl xessGetProperties(ptr ptr ptr) d3d12_get_properties
 @ cdecl xessGetVelocityScale(ptr ptr ptr) d3d12_get_velocity_scale
 @ cdecl xessGetVersion(ptr)
 @ cdecl xessIsOptimalDriver(ptr) d3d12_is_optimal_driver
-@ cdecl xessSelectNetworkModel() xess_invalid_context
+@ cdecl xessSelectNetworkModel(ptr) d3d12_not_implemented
 @ cdecl xessSetContextParameterF() xess_invalid_context
-@ cdecl xessSetExposureMultiplier() xess_invalid_context
+@ cdecl xessSetExposureMultiplier(ptr) d3d12_not_implemented
 @ cdecl xessSetJitterScale(ptr float float) d3d12_set_jitter_scale
 @ cdecl xessSetLoggingCallback(ptr long ptr) d3d12_set_logging_callback
-@ cdecl xessSetMaxResponsiveMaskValue() xess_invalid_context
+@ cdecl xessSetMaxResponsiveMaskValue(ptr) d3d12_not_implemented
 @ cdecl xessSetVelocityScale(ptr float float) d3d12_set_velocity_scale
-@ cdecl xessStartDump() xess_invalid_context
+@ cdecl xessStartDump(ptr) d3d12_not_implemented
 @ cdecl xessTrinityCreateContext() xess_unsupported
 @ cdecl xessTrinityGetRequiredDeviceExtensions() xess_unsupported
 @ cdecl xessTrinityGetRequiredDeviceFeatures() xess_unsupported
