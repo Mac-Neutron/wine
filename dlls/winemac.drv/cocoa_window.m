@@ -409,6 +409,10 @@ static inline BOOL stage_manager_enabled(void)
         image = CGImageCreateWithImageInRect(maskedImage, imageRect);
         CGImageRelease(maskedImage);
 
+        /* AppKit owns this layer's sublayers; put the letterbox bars back if it dropped them */
+        if (window.contentViewMaskLayer && window.contentViewMaskLayer.superlayer != layer)
+            [layer addSublayer:window.contentViewMaskLayer];
+
         if (image)
         {
             layer.position = surfaceRect.origin;
@@ -1962,14 +1966,14 @@ static inline BOOL stage_manager_enabled(void)
         {
             self.shapeChangedSinceLastDraw = TRUE;
             [[self contentView] setNeedsDisplay:YES];
-            [self setBackgroundColor:[NSColor windowBackgroundColor]];
+            [self setBackgroundColor:self.contentViewMaskLayer ? [NSColor blackColor] : [NSColor windowBackgroundColor]];
             [self setOpaque:YES];
         }
         else if ([self isOpaque] && self.needsTransparency)
         {
             self.shapeChangedSinceLastDraw = TRUE;
             [[self contentView] setNeedsDisplay:YES];
-            [self setBackgroundColor:[NSColor clearColor]];
+            [self setBackgroundColor:self.contentViewMaskLayer ? [NSColor blackColor] : [NSColor clearColor]];
             [self setOpaque:NO];
         }
     }
@@ -2556,16 +2560,22 @@ static inline BOOL stage_manager_enabled(void)
         {
             [self.contentViewMaskLayer removeFromSuperlayer];
             self.contentViewMaskLayer = nil;
+            [self setBackgroundColor:[self isOpaque] ? [NSColor windowBackgroundColor] : [NSColor clearColor]];
         }
 
         if (CGRectIsEmpty(rect))
             return;
 
+        /* Whatever shows through the bars (the window's own unpainted surface
+         * or the window background) must be black too. */
+        [self setBackgroundColor:[NSColor blackColor]];
+        rect = cgrect_mac_from_win(rect);
+
         CAShapeLayer *shapeLayer = [CAShapeLayer layer];
-        shapeLayer.bounds = self.contentView.layer.bounds;
-        shapeLayer.position = self.contentView.layer.position;
+        /* The view's bounds, not its layer's: the layer can still have the
+         * size from before the frame change that made the window fullscreen. */
+        shapeLayer.frame = NSRectToCGRect(self.contentView.bounds);
         shapeLayer.geometryFlipped = self.contentView.layer.geometryFlipped;
-        shapeLayer.anchorPoint = self.contentView.layer.anchorPoint;
         shapeLayer.fillColor = CGColorGetConstantColor(kCGColorBlack);
 
         CGMutablePathRef path = CGPathCreateMutable();
