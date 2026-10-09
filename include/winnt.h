@@ -8166,7 +8166,7 @@ static FORCEINLINE LONGLONG WINAPI InterlockedXorRelease64( LONGLONG volatile *d
 
 #endif  /* defined(__arm__) || defined(__aarch64__) */
 
-#if defined(__x86_64__) || defined(__i386__)
+#if (defined(__x86_64__) && !defined(__arm64ec__)) || defined(__i386__)
 /* On x86, Support old GCC with either no or buggy (GCC BZ#81316) __atomic_* support */
 #define __WINE_ATOMIC_LOAD_ACQUIRE(ptr, ret) do { C_ASSERT(sizeof(*(ptr)) <= sizeof(void *)); *(ret) = *(ptr); __asm__ __volatile__( "" ::: "memory" ); } while (0)
 #define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) do { C_ASSERT(sizeof(*(ptr)) <= sizeof(void *)); *(ret) = *(ptr); } while (0)
@@ -8177,7 +8177,7 @@ static FORCEINLINE LONGLONG WINAPI InterlockedXorRelease64( LONGLONG volatile *d
 #define __WINE_ATOMIC_LOAD_RELAXED(ptr, ret) __atomic_load(ptr, ret, __ATOMIC_RELAXED)
 #define __WINE_ATOMIC_STORE_RELEASE(ptr, val) __atomic_store(ptr, val, __ATOMIC_RELEASE)
 #define __WINE_ATOMIC_STORE_RELAXED(ptr, val) __atomic_store(ptr, val, __ATOMIC_RELAXED)
-#endif  /* defined(__x86_64__) || defined(__i386__) */
+#endif  /* (defined(__x86_64__) && !defined(__arm64ec__)) || defined(__i386__) */
 
 static FORCEINLINE CHAR ReadAcquire8( CHAR const volatile *src )
 {
