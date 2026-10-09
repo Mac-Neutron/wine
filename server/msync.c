@@ -416,20 +416,14 @@ static inline mach_msg_return_t destroy_all( unsigned int shm_idx )
 }
 
 
-/* An auto-reset event, its server-side twin and a mutex release exactly one
- * waiter. Waking the rest buys them a trip through the scheduler to find the
- * object already taken, so wake one and leave them asleep. */
+/* Every type wakes all, as CrossOver 26.3 does. A wait-all leg parks on the
+ * object's word only to look at it, so a wake-one could pick that leg and
+ * leave a single waiter asleep with the object signalled. Parking those legs
+ * on the pump instead kept wake-one but measured slower than the plain
+ * wineserver: a wait-all's wake took 10.6-11.3 us against its 9.1-9.2 us. */
 static inline uint32_t wake_flags( unsigned short msync_type )
 {
-    switch (msync_type)
-    {
-    case MSYNC_AUTO_EVENT:
-    case MSYNC_AUTO_SERVER:
-    case MSYNC_MUTEX:
-        return 0;
-    default:
-        return ULF_WAKE_ALL;
-    }
+    return ULF_WAKE_ALL;
 }
 
 static inline mach_msg_return_t signal_all( unsigned int shm_idx, int *shm )
@@ -823,8 +817,8 @@ void msync_abandon_mutexes( thread_id_t tid )
         {
             if (debug_level)
                 fprintf( stderr, "msync_abandon_mutexes() idx=%d\n", msync->shm_idx );
-            mutex->tid = ~0;
             mutex->count = 0;
+            __atomic_store_n( &mutex->tid, ~0, __ATOMIC_SEQ_CST );
             signal_all ( msync->shm_idx, (int *)mutex );
         }
     }
