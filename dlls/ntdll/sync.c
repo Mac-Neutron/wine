@@ -342,43 +342,129 @@ NTSTATUS WINAPI RtlpUnWaitCriticalSection( RTL_CRITICAL_SECTION *crit )
 }
 
 
+#define CS_SPIN_DEFAULT 0     /* budget in ns when SpinCount is 0, ARM only: 0 parks at once (C1), 1000 spins 1 µs through the slot (C2-b1000); batch Task 8 rules it (R36) */
+#define CS_SPIN_MAX 10000     /* cap on an explicit SpinCount: ns on ARM, iterations on x86 */
+
+/* LockCount = ~(spinner << 30 | waiters << 2 | claim << 1 | locked): the Windows 2003 SP1+ layout in bits 0-29 plus
+ * an advisory spinner bit.  -1 = free and idle, -2 = held and idle. */
+#define CS_FREE    0x00000001 /* bit 0: 1 = unlocked */
+#define CS_NOCLAIM 0x00000002 /* bit 1: 0 = a Leave claimed a parked waiter that has not yet taken the lock or re-parked */
+#define CS_WAITER  0x00000004 /* bits 2-29: ones-complement count of parked waiters */
+#define CS_NOSPIN  0x40000000 /* bit 30: 0 = the slot spinner exists; Leave never reads it */
+static inline ULONG cs_waiters( LONG v ) { return ((ULONG)~v >> 2) & 0x0fffffff; }
+
+#if defined(__aarch64__) || defined(__arm64ec__)   /* first: ARM64EC defines __x86_64__ as well */
+#define cs_release(p) InterlockedOr( (p), CS_FREE )               /* one ldsetal; idempotent */
+#define CS_SPIN_ARCH_DEFAULT CS_SPIN_DEFAULT
+static inline ULONG64 cs_now(void) { ULONG64 t; __asm__ __volatile__( "mrs %0, cntvct_el0" : "=r"(t) ); return t; }
+static inline ULONG64 cs_freq(void) { ULONG64 f; __asm__( "mrs %0, cntfrq_el0" : "=r"(f) ); return f; }  /* never assume it */
+static inline ULONG64 cs_spin_start( ULONG ns ) { return cs_now() + ns * cs_freq() / 1000000000; }
+static inline BOOL cs_spin_on( ULONG64 *end )
+{
+    if (cs_now() >= *end) return FALSE;
+    __asm__ __volatile__( "isb" ::: "memory" );
+    return TRUE;
+}
+#elif defined(__i386__) || defined(__x86_64__)
+#if defined(__arm64ec__)
+#error "ARM64EC must take the ARM branch"
+#endif
+#define cs_release(p) InterlockedExchangeAdd( (p), CS_FREE )      /* one lock xadd; bit 0 is clear while held */
+#define CS_SPIN_ARCH_DEFAULT 0                                     /* no default spin: no clock, no lane covers it */
+static inline ULONG64 cs_spin_start( ULONG n ) { return n; }       /* an iteration count, Windows' own unit */
+static inline BOOL cs_spin_on( ULONG64 *left )
+{
+    if (!*left) return FALSE;
+    --*left;
+    YieldProcessor();
+    return TRUE;
+}
+#else
+#error "no spin primitives for this architecture"
+#endif
+
+static ULONG cs_spin_budget( const RTL_CRITICAL_SECTION *crit )
+{
+    ULONG n = crit->SpinCount & 0x00ffffff;        /* strip Windows' flag bits, e.g. DYNAMIC_SPIN 0x02000000 */
+    if (NtCurrentTeb()->Peb->NumberOfProcessors <= 1) return 0;
+    if (n) return min( n, CS_SPIN_MAX );
+    return CS_SPIN_ARCH_DEFAULT;
+}
+
+static void DECLSPEC_NOINLINE cs_enter_slow( RTL_CRITICAL_SECTION *crit )
+{
+    ULONG budget = cs_spin_budget( crit );
+    LONG owed = 0;            /* bits this thread sets again in its next lock-word CAS: CS_NOCLAIM once a Leave claimed
+                                 it, CS_NOSPIN while it holds the slot */
+    BOOL spinning = FALSE;
+    ULONG64 end = 0;
+    NTSTATUS status;
+    LONG v;
+
+    if (RtlDllShutdownInProgress()) return;                   /* proceed as owner, as RtlpWaitForCriticalSection does */
+    for (;;)
+    {
+        v = ReadAcquire( &crit->LockCount );
+        if (v & CS_FREE)                                      /* take it, handing back what we owe, in one CAS */
+        {
+            if (InterlockedCompareExchange( &crit->LockCount, (v & ~CS_FREE) | owed, v ) != v) continue;
+            return;
+        }
+        if (spinning)
+        {
+            if (cs_spin_on( &end )) continue;                 /* isb until the deadline, then park */
+            spinning = FALSE;
+            budget = 0;                                       /* no second spin before the next wake */
+        }
+        else if (budget && (v & CS_NOSPIN))                   /* take the slot; a woken waiter hands its claim back */
+        {
+            if (InterlockedCompareExchange( &crit->LockCount, (v | owed) & ~CS_NOSPIN, v ) != v) continue;
+            owed = CS_NOSPIN;
+            spinning = TRUE;
+            end = cs_spin_start( budget );
+            continue;
+        }
+        /* park: waiters + 1, handing back what we owe, in one CAS */
+        if (InterlockedCompareExchange( &crit->LockCount, (v - CS_WAITER) | owed, v ) != v) continue;
+        /* unchanged export: wait_semaphore's token CAS else RtlWaitOnAddress, or NtWaitForSingleObject on a real handle;
+           5 s / 60 s ERR loop; ContentionCount++; a failed handle wait returns its status */
+        if ((status = RtlpWaitForCriticalSection( crit ))) RtlRaiseStatus( status );
+        if (RtlDllShutdownInProgress()) return;               /* it returned without a token */
+        owed = CS_NOCLAIM;                                    /* a Leave claimed us: bit 1 is clear on our behalf */
+        spinning = FALSE;
+        budget = cs_spin_budget( crit );
+    }
+}
+
+static void DECLSPEC_NOINLINE cs_leave_slow( RTL_CRITICAL_SECTION *crit )
+{
+    for (;;)
+    {
+        LONG v = ReadAcquire( &crit->LockCount );
+        /* re-taken (that owner's Leave claims), a claim in flight, or nobody parked: nothing to do */
+        if (!(v & CS_FREE) || !(v & CS_NOCLAIM) || !cs_waiters( v )) return;
+        if (InterlockedCompareExchange( &crit->LockCount, (v + CS_WAITER) & ~CS_NOCLAIM, v ) == v) break;
+    }
+    RtlpUnWaitCriticalSection( crit );   /* unchanged: XCHG token 1 + RtlWakeAddressSingle, or NtReleaseSemaphore */
+}
+
+
 /******************************************************************************
  *      RtlEnterCriticalSection   (NTDLL.@)
  */
 NTSTATUS WINAPI RtlEnterCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
-    if (crit->SpinCount)
+    if (!(InterlockedAnd( &crit->LockCount, ~CS_FREE ) & CS_FREE))   /* ldclral / lock btr: the uncontended path */
     {
-        ULONG count;
-
-        if (RtlTryEnterCriticalSection( crit )) return STATUS_SUCCESS;
-        for (count = crit->SpinCount; count > 0; count--)
-        {
-            if (crit->LockCount > 0) break;  /* more than one waiter, don't bother spinning */
-            if (crit->LockCount == -1)       /* try again */
-            {
-                if (InterlockedCompareExchange( &crit->LockCount, 0, -1 ) == -1) goto done;
-            }
-            YieldProcessor();
-        }
-    }
-
-    if (InterlockedIncrement( &crit->LockCount ))
-    {
-        NTSTATUS status;
-
         if (crit->OwningThread == ULongToHandle(GetCurrentThreadId()))
         {
-            crit->RecursionCount++;
+            crit->RecursionCount++;                                  /* LockCount untouched */
             return STATUS_SUCCESS;
         }
-
-        /* Now wait for it */
-        if ((status = RtlpWaitForCriticalSection( crit ))) RtlRaiseStatus( status );
+        cs_enter_slow( crit );
     }
-done:
-    crit->OwningThread   = ULongToHandle(GetCurrentThreadId());
-    crit->RecursionCount = 1;
+    crit->OwningThread   = ULongToHandle(GetCurrentThreadId());    /* after the acquiring atomic */
+    crit->RecursionCount = 1;                                       /* also repairs an over-leave */
     return STATUS_SUCCESS;
 }
 
@@ -388,20 +474,18 @@ done:
  */
 BOOL WINAPI RtlTryEnterCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
-    BOOL ret = FALSE;
-    if (InterlockedCompareExchange( &crit->LockCount, 0, -1 ) == -1)
+    if (InterlockedAnd( &crit->LockCount, ~CS_FREE ) & CS_FREE)
     {
         crit->OwningThread   = ULongToHandle(GetCurrentThreadId());
         crit->RecursionCount = 1;
-        ret = TRUE;
+        return TRUE;
     }
-    else if (crit->OwningThread == ULongToHandle(GetCurrentThreadId()))
+    if (crit->OwningThread == ULongToHandle(GetCurrentThreadId()))
     {
-        InterlockedIncrement( &crit->LockCount );
         crit->RecursionCount++;
-        ret = TRUE;
+        return TRUE;
     }
-    return ret;
+    return FALSE;                                                    /* clearing a clear bit changed nothing */
 }
 
 
@@ -429,20 +513,17 @@ BOOL WINAPI RtlIsCriticalSectionLockedByThread( RTL_CRITICAL_SECTION *crit )
  */
 NTSTATUS WINAPI RtlLeaveCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
+    LONG old;
+
     if (--crit->RecursionCount)
     {
-        if (crit->RecursionCount > 0) InterlockedDecrement( &crit->LockCount );
-        else ERR( "section %p %s is not acquired\n", crit, debugstr_a( crit_section_get_name( crit )));
+        if (crit->RecursionCount < 0)
+            ERR( "section %p %s is not acquired\n", crit, debugstr_a( crit_section_get_name( crit )));
+        return STATUS_SUCCESS;                                       /* recursive or stray Leave: no atomic */
     }
-    else
-    {
-        crit->OwningThread = 0;
-        if (InterlockedDecrement( &crit->LockCount ) >= 0)
-        {
-            /* someone is waiting */
-            RtlpUnWaitCriticalSection( crit );
-        }
-    }
+    crit->OwningThread = 0;                                          /* before the releasing atomic */
+    old = cs_release( &crit->LockCount );
+    if ((old & CS_NOCLAIM) && cs_waiters( old )) cs_leave_slow( crit );
     return STATUS_SUCCESS;
 }
 
