@@ -3076,7 +3076,6 @@ static void test_RtlLeaveCriticalSection(void)
 
     status = RtlEnterCriticalSection(&cs);
     ok(!status, "RtlEnterCriticalSection failed: %lx\n", status);
-    todo_wine
     ok(cs.LockCount == -2, "expected LockCount == -2, got %ld\n", cs.LockCount);
     ok(cs.RecursionCount == 1, "expected RecursionCount == 1, got %ld\n", cs.RecursionCount);
     ok(cs.OwningThread == ULongToHandle(GetCurrentThreadId()), "unexpected OwningThread\n");
@@ -3107,7 +3106,6 @@ static void test_RtlLeaveCriticalSection(void)
     /* entering section fixes RecursionCount */
     status = RtlEnterCriticalSection(&cs);
     ok(!status, "RtlEnterCriticalSection failed: %lx\n", status);
-    todo_wine
     ok(cs.LockCount == -2, "expected LockCount == -2, got %ld\n", cs.LockCount);
     ok(cs.RecursionCount == 1, "expected RecursionCount == 1, got %ld\n", cs.RecursionCount);
     ok(cs.OwningThread == ULongToHandle(GetCurrentThreadId()), "unexpected OwningThread\n");
@@ -3120,6 +3118,184 @@ static void test_RtlLeaveCriticalSection(void)
 
     status = RtlDeleteCriticalSection(&cs);
     ok(!status, "RtlDeleteCriticalSection failed: %lx\n", status);
+}
+
+/* The Windows 2003 SP1+ LockCount encoding (batch Task 8, design.md §2.1): ~(waiters << 2 | claim << 1 | locked). */
+struct critsect_stress { RTL_CRITICAL_SECTION *cs; volatile LONG counter; LONG others; };
+
+/* 20,000 rounds. Round i % 3: 0 = Enter; 1 = TryEnter, else Enter; 2 = Enter twice. Then counter = counter + 1 (no
+   atomic, so a second owner loses a count); others++ (InterlockedIncrement) when OwningThread isn't this thread;
+   then the matching Leaves. */
+static DWORD WINAPI critsect_stress_thread( void *arg )
+{
+    struct critsect_stress *s = arg;
+    HANDLE self = ULongToHandle( GetCurrentThreadId() );
+    unsigned int i;
+
+    for (i = 0; i < 20000; i++)
+    {
+        if (i % 3 != 1 || !RtlTryEnterCriticalSection( s->cs )) RtlEnterCriticalSection( s->cs );
+        if (i % 3 == 2) RtlEnterCriticalSection( s->cs );
+        s->counter = s->counter + 1;
+        if (s->cs->OwningThread != self) InterlockedIncrement( &s->others );
+        if (i % 3 == 2) RtlLeaveCriticalSection( s->cs );
+        RtlLeaveCriticalSection( s->cs );
+    }
+    return 0;
+}
+
+static DWORD WINAPI critsect_waiter( void *arg )  /* Enter, Leave, return 0 */
+{
+    RtlEnterCriticalSection( arg );
+    RtlLeaveCriticalSection( arg );
+    return 0;
+}
+
+static void critsect_check_idle( RTL_CRITICAL_SECTION *cs, const char *what )
+{
+    ok( cs->LockCount == -1, "%s: LockCount %ld, expected -1\n", what, cs->LockCount );
+    ok( cs->RecursionCount == 0, "%s: RecursionCount %ld, expected 0\n", what, cs->RecursionCount );
+    ok( !cs->OwningThread, "%s: OwningThread %p\n", what, cs->OwningThread );
+}
+
+/* n critsect_stress_threads. With suspend, main suspends and resumes each one in turn, Sleep( 1 ) apart, until all
+   are done; main does nothing else while one is suspended. */
+static void critsect_run( RTL_CRITICAL_SECTION *cs, unsigned int n, BOOL suspend, const char *what )
+{
+    struct critsect_stress s = { cs };
+    DWORD r, start = GetTickCount();
+    HANDLE t[8];
+    unsigned int i;
+
+    for (i = 0; i < n; i++) t[i] = CreateThread( NULL, 0, critsect_stress_thread, &s, 0, NULL );
+    if (suspend)
+    {
+        for (i = 0; (r = WaitForMultipleObjects( n, t, TRUE, 0 )) == WAIT_TIMEOUT && GetTickCount() - start < 60000;
+             i = (i + 1) % n)
+        {
+            SuspendThread( t[i] );
+            Sleep( 1 );
+            ResumeThread( t[i] );
+            Sleep( 1 );
+        }
+    }
+    else r = WaitForMultipleObjects( n, t, TRUE, 60000 );
+    ok( r == WAIT_OBJECT_0, "%s: the threads weren't done in 60 s\n", what );
+    if (r != WAIT_OBJECT_0) return;
+    for (i = 0; i < n; i++) CloseHandle( t[i] );
+    ok( s.counter == n * 20000, "%s: counter %ld, expected %u\n", what, s.counter, n * 20000 );
+    ok( !s.others, "%s: a holder saw another owner %ld times\n", what, s.others );
+    critsect_check_idle( cs, what );
+}
+
+static void test_critsect_stress(void)
+{
+    static const ULONG spins[] = { 0, 4000 };
+    RTL_CRITICAL_SECTION cs;
+    char what[32];
+    unsigned int i;
+
+    if (!pRtlInitializeCriticalSectionEx) return; /* Skip winxp */
+
+    for (i = 0; i < ARRAY_SIZE(spins); i++)
+    {
+        sprintf( what, "stress, SpinCount %lu", spins[i] );
+        pRtlInitializeCriticalSectionEx( &cs, spins[i], RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO );
+        critsect_run( &cs, 6, FALSE, what );
+        ok( !cs.LockSemaphore || broken( cs.LockSemaphore != NULL ) /* Windows may keep its wait object */,
+            "%s: LockSemaphore %p\n", what, cs.LockSemaphore );
+        RtlDeleteCriticalSection( &cs );
+    }
+}
+
+static void test_critsect_contention(void)
+{
+    RTL_CRITICAL_SECTION cs;
+    CONTEXT ctx;
+    HANDLE t;
+    BOOL ret;
+    int i;
+
+    if (!pRtlInitializeCriticalSectionEx) return; /* Skip winxp */
+
+    pRtlInitializeCriticalSectionEx( &cs, 0, RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO );
+    RtlEnterCriticalSection( &cs );
+    t = CreateThread( NULL, 0, critsect_waiter, &cs, 0, NULL );
+    for (i = 0; i < 500 && cs.LockCount != -6; i++) Sleep( 10 );  /* Windows 8+ may spin before it parks */
+    ok( cs.LockCount == -6, "one parked waiter: LockCount %ld, expected -6\n", cs.LockCount );
+    Sleep( 100 );  /* parked in its wait, outside the futex queue's spin lock (sync.c:893-907) */
+    ok( SuspendThread( t ) == 0, "SuspendThread failed\n" );
+    ctx.ContextFlags = CONTEXT_CONTROL;
+    ok( GetThreadContext( t, &ctx ), "GetThreadContext failed\n" );  /* the suspend has taken effect */
+    RtlLeaveCriticalSection( &cs );
+    ok( cs.LockCount == -3, "a claim in flight: LockCount %ld, expected -3\n", cs.LockCount );
+    ret = RtlTryEnterCriticalSection( &cs );
+    ok( ret, "TryEnter with a claim in flight failed, LockCount %ld\n", cs.LockCount );
+    if (ret)
+    {
+        ok( cs.LockCount == -4, "barged in: LockCount %ld, expected -4\n", cs.LockCount );
+        RtlLeaveCriticalSection( &cs );
+        ok( cs.LockCount == -3, "no second claim: LockCount %ld, expected -3\n", cs.LockCount );
+    }
+    ok( ResumeThread( t ) == 1, "ResumeThread failed\n" );
+    /* 30 s: a lost wake shows as wait_semaphore's 5 s timeout and its ERR, not as a failure on that boundary */
+    ok( WaitForSingleObject( t, 30000 ) == WAIT_OBJECT_0, "the claimed waiter never entered\n" );
+    CloseHandle( t );
+    critsect_check_idle( &cs, "contention" );
+    RtlDeleteCriticalSection( &cs );
+}
+
+static void test_critsect_semaphore(void)
+{
+    RTL_CRITICAL_SECTION cs;
+    HANDLE sem;
+
+    if (!pRtlInitializeCriticalSectionEx) return; /* Skip winxp */
+    if (!winetest_platform_is_wine)
+    {
+        skip( "a semaphore in LockSemaphore is Wine's own path\n" );
+        return;
+    }
+
+    pRtlInitializeCriticalSectionEx( &cs, 0, RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO );
+    cs.LockSemaphore = sem = CreateSemaphoreA( NULL, 0, 1, NULL );
+    critsect_run( &cs, 4, FALSE, "semaphore" );
+    ok( WaitForSingleObject( sem, 0 ) == WAIT_TIMEOUT, "a token was left in the semaphore\n" );
+    RtlDeleteCriticalSection( &cs );  /* closes sem */
+}
+
+static void test_critsect_suspend(void)
+{
+    RTL_CRITICAL_SECTION cs;
+
+    if (!pRtlInitializeCriticalSectionEx) return; /* Skip winxp */
+
+    pRtlInitializeCriticalSectionEx( &cs, 0, RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO );
+    critsect_run( &cs, 4, TRUE, "suspend" );
+    RtlDeleteCriticalSection( &cs );
+}
+
+static void test_critsect_recursion(void)
+{
+    RTL_CRITICAL_SECTION cs;
+
+    if (!pRtlInitializeCriticalSectionEx) return; /* Skip winxp */
+
+    pRtlInitializeCriticalSectionEx( &cs, 0, RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO );
+    RtlEnterCriticalSection( &cs );
+    RtlEnterCriticalSection( &cs );
+    ok( cs.LockCount == -2 && cs.RecursionCount == 2,
+        "after a recursive Enter: LockCount %ld, RecursionCount %ld, expected -2, 2\n", cs.LockCount, cs.RecursionCount );
+    ok( RtlTryEnterCriticalSection( &cs ), "a recursive TryEnter failed\n" );
+    ok( cs.LockCount == -2 && cs.RecursionCount == 3,
+        "after a recursive TryEnter: LockCount %ld, RecursionCount %ld, expected -2, 3\n", cs.LockCount, cs.RecursionCount );
+    RtlLeaveCriticalSection( &cs );
+    RtlLeaveCriticalSection( &cs );
+    ok( cs.LockCount == -2 && cs.RecursionCount == 1,
+        "after two Leaves: LockCount %ld, RecursionCount %ld, expected -2, 1\n", cs.LockCount, cs.RecursionCount );
+    RtlLeaveCriticalSection( &cs );
+    critsect_check_idle( &cs, "recursion" );
+    RtlDeleteCriticalSection( &cs );
 }
 
 struct ldr_enum_context
@@ -3595,7 +3771,7 @@ static LONG CALLBACK test_heap_destroy_except_handler( EXCEPTION_POINTERS *eptrs
         test_heap_destroy_break = TRUE;
         return (LONG)EXCEPTION_CONTINUE_EXECUTION;
 #elif defined( __x86_64__ )
-        eptrs->ContextRecord->Rip += 1;
+        eptrs->ContextRecord->Rip += *(BYTE *)eptrs->ContextRecord->Rip == 0xcc ? 1 : 4;  /* int3, else ARM64X's brk */
         test_heap_destroy_break = TRUE;
         return (LONG)EXCEPTION_CONTINUE_EXECUTION;
 #elif defined( __aarch64__ )
@@ -5600,6 +5776,11 @@ START_TEST(rtl)
     test_RtlIsCriticalSectionLocked();
     test_RtlInitializeCriticalSectionEx();
     test_RtlLeaveCriticalSection();
+    test_critsect_stress();
+    test_critsect_contention();
+    test_critsect_semaphore();
+    test_critsect_suspend();
+    test_critsect_recursion();
     test_LdrEnumerateLoadedModules();
     test_RtlMakeSelfRelativeSD();
     test_LdrRegisterDllNotification();
