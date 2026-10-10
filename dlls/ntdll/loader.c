@@ -1519,6 +1519,9 @@ static NTSTATUS fixup_imports( WINE_MODREF *wm, LPCWSTR load_path )
             add_module_dependency_after( wm->ldr.DdagNode, imp->ldr.DdagNode, dep_after );
     }
     if (wm->ldr.ActivationContext) RtlDeactivateActivationContext( 0, cookie );
+#ifdef __arm64ec__
+    if (!status && !TRACE_ON(relay) && !TRACE_ON(snoop)) arm64ec_fill_aux_iat( wm->ldr.DllBase );
+#endif
     return status;
 }
 
@@ -4057,6 +4060,9 @@ static void free_modref( WINE_MODREF *wm )
 
     free_tls_slot( &wm->ldr );
     RtlReleaseActivationContext( wm->ldr.ActivationContext );
+#ifdef __arm64ec__
+    arm64ec_forget_aux_iat( wm->ldr.DllBase, wm->ldr.SizeOfImage );
+#endif
     NtUnmapViewOfSection( NtCurrentProcess(), wm->ldr.DllBase );
     if (cached_modref == wm) cached_modref = NULL;
     RtlFreeUnicodeString( &wm->ldr.FullDllName );
