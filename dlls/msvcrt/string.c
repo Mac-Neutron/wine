@@ -33,6 +33,7 @@
 #include "winnls.h"
 #include "wine/asm.h"
 #include "wine/debug.h"
+#include "aor_string.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
@@ -1564,9 +1565,13 @@ int CDECL _atoldbl(_LDOUBLE *value, char *str)
  */
 size_t __cdecl strlen(const char *str)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    return aor_strlen( str );
+#else
     const char *s = str;
     while (*s) s++;
     return s - str;
+#endif
 }
 
 /******************************************************************
@@ -1574,12 +1579,16 @@ size_t __cdecl strlen(const char *str)
  */
 size_t CDECL strnlen(const char *s, size_t maxlen)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    return aor_strnlen( s, maxlen );
+#else
     size_t i;
 
     for(i=0; i<maxlen; i++)
         if(!s[i]) break;
 
     return i;
+#endif
 }
 
 /*********************************************************************
@@ -3054,6 +3063,8 @@ void * __cdecl memmove(void *dst, const void *src, size_t n)
 {
 #if defined(__x86_64__) && !defined(__arm64ec__)
     return sse2_memmove(dst, src, n);
+#elif defined(__aarch64__) || defined(__arm64ec__)
+    return aor_memmove( dst, src, n );
 #else
     unsigned char *d = dst;
     const unsigned char *s = src;
@@ -3249,11 +3260,15 @@ void *__cdecl memset(void *dst, int c, size_t n)
  */
 char* __cdecl strchr(const char *str, int c)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    return aor_strchr( str, c );
+#else
     do
     {
         if (*str == (char)c) return (char*)str;
     } while (*str++);
     return NULL;
+#endif
 }
 
 /*********************************************************************
@@ -3261,9 +3276,13 @@ char* __cdecl strchr(const char *str, int c)
  */
 char* __cdecl strrchr(const char *str, int c)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    return aor_strrchr( str, c );
+#else
     char *ret = NULL;
     do { if (*str == (char)c) ret = (char*)str; } while (*str++);
     return ret;
+#endif
 }
 
 /*********************************************************************
@@ -3271,10 +3290,14 @@ char* __cdecl strrchr(const char *str, int c)
  */
 void* __cdecl memchr(const void *ptr, int c, size_t n)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    return aor_memchr( ptr, c, n );
+#else
     const unsigned char *p = ptr;
 
     for (p = ptr; n; n--, p++) if (*p == (unsigned char)c) return (void *)(ULONG_PTR)p;
     return NULL;
+#endif
 }
 
 /*********************************************************************
@@ -3282,10 +3305,15 @@ void* __cdecl memchr(const void *ptr, int c, size_t n)
  */
 int __cdecl strcmp(const char *str1, const char *str2)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
+    int r = aor_strcmp( str1, str2 );
+    return (r > 0) - (r < 0);
+#else
     while (*str1 && *str1 == *str2) { str1++; str2++; }
     if ((unsigned char)*str1 > (unsigned char)*str2) return 1;
     if ((unsigned char)*str1 < (unsigned char)*str2) return -1;
     return 0;
+#endif
 }
 
 /*********************************************************************
