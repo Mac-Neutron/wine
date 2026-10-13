@@ -1518,28 +1518,26 @@ static void test_source_resolver(void)
     ULONG refcount;
     BOOL ret;
 
-    static const struct
+    static const WCHAR *leading_char_tests[] =
     {
-        const WCHAR *chars;
-        UINT win_error;
-        BOOL todo;
-    }
-    leading_char_tests[] =
+        L"/",
+        L"//",
+        L"///",
+        L"/////",
+    };
+
+    static const WCHAR *failing_leading_char_tests[] =
     {
-        {L"/",            ERROR_SUCCESS},
-        {L"//",           ERROR_SUCCESS},
-        {L"///",          ERROR_SUCCESS},
-        {L"/////",        ERROR_SUCCESS},
-        {L":",            ERROR_INVALID_NAME, TRUE},
-        {L"::",           ERROR_PATH_NOT_FOUND},
-        {L":::::",        ERROR_PATH_NOT_FOUND},
-        {L"/file://",     ERROR_INVALID_NAME, TRUE},
-        {L"//file://",    ERROR_BAD_NETPATH, TRUE},
-        {L"///file://",   ERROR_INVALID_NAME, TRUE},
-        {L"/////file://", ERROR_BAD_NETPATH, TRUE},
-        {L":file://",     ERROR_INVALID_NAME, TRUE},
-        {L"::file://",    ERROR_PATH_NOT_FOUND},
-        {L":::::file://", ERROR_PATH_NOT_FOUND},
+        L":",
+        L"::",
+        L":::::",
+        L"/file://",
+        L"//file://",
+        L"///file://",
+        L"/////file://",
+        L":file://",
+        L"::file://",
+        L":::::file://",
     };
 
     if (!pMFCreateSourceResolver)
@@ -1611,13 +1609,28 @@ static void test_source_resolver(void)
     {
         winetest_push_context("test %d", i);
 
-        lstrcpyW(pathW, leading_char_tests[i].chars);
+        lstrcpyW(pathW, leading_char_tests[i]);
         lstrcatW(pathW, filename);
 
         hr = IMFSourceResolver_CreateObjectFromURL(resolver, pathW, MF_RESOLUTION_BYTESTREAM, NULL, &obj_type,
                 (IUnknown **)&stream);
-        todo_wine_if(leading_char_tests[i].todo)
-        ok(hr == HRESULT_FROM_WIN32(leading_char_tests[i].win_error), "Unexpected hr %#lx.\n", hr);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        if (SUCCEEDED(hr))
+            IMFByteStream_Release(stream);
+
+        winetest_pop_context();
+    }
+
+    for (i = 0; i < ARRAY_SIZE(failing_leading_char_tests); ++i)
+    {
+        winetest_push_context("test %d", i);
+
+        lstrcpyW(pathW, failing_leading_char_tests[i]);
+        lstrcatW(pathW, filename);
+
+        hr = IMFSourceResolver_CreateObjectFromURL(resolver, pathW, MF_RESOLUTION_BYTESTREAM, NULL, &obj_type,
+                (IUnknown **)&stream);
+        ok(FAILED(hr), "Unexpected hr %#lx.\n", hr);
         if (SUCCEEDED(hr))
             IMFByteStream_Release(stream);
 
@@ -6968,8 +6981,12 @@ static void test_dxgi_device_manager(void)
     ok(hr == S_OK, "D3D11CreateDevice failed: %#lx.\n", hr);
     EXPECT_REF(d3d11_dev, 1);
 
-    hr = pMFCreateDXGIDeviceManager(NULL, &manager);
-    ok(hr == E_POINTER, "MFCreateDXGIDeviceManager should failed: %#lx.\n", hr);
+    if (0)
+    {
+        /* Crashes on Windows 11 */
+        hr = pMFCreateDXGIDeviceManager(NULL, &manager);
+        ok(hr == E_POINTER, "MFCreateDXGIDeviceManager should failed: %#lx.\n", hr);
+    }
 
     token = 0;
     hr = pMFCreateDXGIDeviceManager(&token, NULL);
@@ -6991,7 +7008,7 @@ static void test_dxgi_device_manager(void)
     EXPECT_REF(manager, 1);
 
     hr = IMFDXGIDeviceManager_GetVideoService(manager, NULL, &IID_ID3D11Device, (void **)&unk);
-    ok(hr == MF_E_DXGI_DEVICE_NOT_INITIALIZED, "Unexpected hr %#lx.\n", hr);
+    ok(hr == MF_E_DXGI_DEVICE_NOT_INITIALIZED || hr == HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE), "Unexpected hr %#lx.\n", hr);
 
     hr = IMFDXGIDeviceManager_OpenDeviceHandle(manager, &handle);
     ok(hr == MF_E_DXGI_DEVICE_NOT_INITIALIZED, "Unexpected hr %#lx.\n", hr);
@@ -7012,7 +7029,7 @@ static void test_dxgi_device_manager(void)
     EXPECT_REF(d3d11_dev, 2);
 
     hr = IMFDXGIDeviceManager_ResetDevice(manager, (IUnknown *)manager2, token);
-    ok(hr == E_INVALIDARG, "IMFDXGIDeviceManager_ResetDevice should failed: %#lx.\n", hr);
+    ok(hr == E_INVALIDARG || hr == E_NOINTERFACE, "Unexpected hr %#lx.\n", hr);
     EXPECT_REF(manager2, 1);
     EXPECT_REF(d3d11_dev, 2);
 

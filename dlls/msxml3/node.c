@@ -374,6 +374,19 @@ struct domnode * domnode_get_root_element(struct domnode *doc)
     return NULL;
 }
 
+struct domnode * domnode_get_dtd(struct domnode *doc)
+{
+    struct domnode *node;
+
+    LIST_FOR_EACH_ENTRY(node, &doc->children, struct domnode, entry)
+    {
+        if (node->type == NODE_DOCUMENT_TYPE)
+            return node;
+    }
+
+    return NULL;
+}
+
 struct domnode *domnode_get_first_child(struct domnode *node)
 {
     return node_from_entry(list_head(&node->children));
@@ -4863,6 +4876,36 @@ static void LIBXML2_LOG_CALLBACK validate_warning(void* ctx, char const* msg, ..
     va_end(ap);
 }
 
+static HRESULT node_validate_root(struct domnode *node, IXMLDOMParseError **err)
+{
+    struct domnode *dtd, *root;
+
+    if (node->type != NODE_DOCUMENT)
+        return S_OK;
+
+    /* Check for root element presence. Tree manipulation should ensure that there is only
+       one top level element. */
+
+    if (!(root = domnode_get_root_element(node)))
+    {
+        if (err)
+            *err = create_parseError(E_XML_NOTWF, NULL, NULL, NULL, 0, 0, 0);
+        return S_FALSE;
+    }
+
+    if ((dtd = domnode_get_dtd(node)))
+    {
+        if (wcscmp(dtd->qname, root->qname))
+        {
+            if (err)
+                *err = create_parseError(E_DOM_ROOT_NAME_MISMATCH, NULL, NULL, NULL, 0, 0, 0);
+            return S_FALSE;
+        }
+    }
+
+    return S_OK;
+}
+
 HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseError **err)
 {
     IXMLDOMSchemaCollection2 *schema;
@@ -4873,22 +4916,38 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
     xmlDocPtr xmldoc;
     xmlNodePtr xmlnode;
 
-    if (!(node = get_node_obj(node_obj)))
-        return E_FAIL;
-
-    if (node->owner != doc && node != doc)
+    if (node_obj)
     {
-        if (err)
-            *err = create_parseError(err_code, NULL, NULL, NULL, 0, 0, 0);
-        return E_FAIL;
+        if (!(node = get_node_obj(node_obj)))
+            return E_FAIL;
+
+        if (node->owner != doc && node != doc)
+        {
+            if (err)
+                *err = create_parseError(err_code, NULL, NULL, NULL, 0, 0, 0);
+            return E_FAIL;
+        }
+
+        switch (node->type)
+        {
+            case NODE_DOCUMENT:
+            case NODE_DOCUMENT_TYPE:
+                if (err)
+                    *err = create_parseError(E_DOM_INVALIDTYPE, NULL, NULL, NULL, 0, 0, 0);
+                return S_FALSE;
+            default:
+                ;
+        }
+    }
+    else
+    {
+        node = doc;
     }
 
-    /* TODO: for now simply treat empty document as not well-formed */
-    if (list_empty(&node->children))
+    if (node->type == NODE_DOCUMENT)
     {
-        if (err)
-            *err = create_parseError(E_XML_NOTWF, NULL, NULL, NULL, 0, 0, 0);
-        return S_FALSE;
+        if ((hr = node_validate_root(node, err)) != S_OK)
+            return hr;
     }
 
     xmldoc = create_xmldoc_from_domdoc(node, &xmlnode);
@@ -4903,7 +4962,7 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
         vctx->warning = validate_warning;
         ++validated;
 
-        ret = node == doc ? xmlValidateDocument(vctx, xmldoc) : xmlValidateElement(vctx, xmldoc, xmlnode);
+        ret = node->type == NODE_DOCUMENT ? xmlValidateDocument(vctx, xmldoc) : xmlValidateElement(vctx, xmldoc, xmlnode);
         if (!ret)
         {
             /* TODO: get a real error code here */

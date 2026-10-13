@@ -3191,6 +3191,41 @@ static void test_parse_errors(void)
             NULL, S_OK, 1057
         },
         {
+            L"Class C\nDefault Sub f\nEnd Sub\nEnd Class\n",
+            1, 0,
+            NULL, S_OK, 1057
+        },
+        {
+            L"Class C\nDefault x\nEnd Class\n",
+            1, 0,
+            NULL, S_OK, 1057
+        },
+        {
+            L"Class C\nPublic Default Property x\nEnd Class\n",
+            1, 24,
+            NULL, S_OK, 1049
+        },
+        {
+            L"Class C\nPublic Default Property\nEnd Class\n",
+            1, 23,
+            NULL, S_OK, 1049
+        },
+        {
+            L"Public Property Get x\nEnd Property\n",
+            0, 16,
+            NULL, S_OK, 1048
+        },
+        {
+            L"Class C\n"
+            "Public Default Function f\n"
+            "End Function\n"
+            "Public Default Property Get p\n"
+            "End Property\n"
+            "End Class\n",
+            3, 15,
+            NULL, S_OK, 1052
+        },
+        {
             /* Unterminated date literal */
             L"x = #1/1/2000\n",
             0, 4,
@@ -3682,6 +3717,52 @@ static void test_parse_errors(void)
             L"Class a\nEnd Class\nReDim a(2)\n",
             2, 6,
             L"ReDim a(2)", S_OK, 1041
+        },
+        {
+            /* A dot separated from a literal is not a member access */
+            L"Dim x, y\nWith x\ny = \"s\" .p\nEnd With\n",
+            2, 8,
+            L"y = \"s\" .p", S_OK
+        },
+        {
+            /* Member access on a literal can't start a statement - error 1024 */
+            L"Dim x\n  \"s\".p = 1\n",
+            1, 2,
+            L"  \"s\".p = 1", S_OK, 1024
+        },
+        {
+            /* Arguments after a call with empty parentheses - error 1025 */
+            L"Sub f\nEnd Sub\nf(),0\n",
+            2, 3,
+            L"f(),0", S_OK, 1025
+        },
+        {
+            L"Sub f\nEnd Sub\nf() 0\n",
+            2, 4,
+            L"f() 0", S_OK, 1025
+        },
+        {
+            /* An operator after a call with empty parentheses - error 1025 */
+            L"Sub f\nEnd Sub\nf() + 1\n",
+            2, 4,
+            L"f() + 1", S_OK, 1025
+        },
+        {
+            /* Missing comma after a parenthesized first argument - error 1025 */
+            L"Sub f(a, b)\nEnd Sub\nf(1) 0\n",
+            2, 5,
+            L"f(1) 0", S_OK, 1025
+        },
+        {
+            L"Dim o\no.M(),0\n",
+            1, 5,
+            L"o.M(),0", S_OK, 1025
+        },
+        {
+            /* Whitespace between a with-statement dot and the member name */
+            L"With x\n. y = 1\nEnd With\n",
+            1, 2,
+            L". y = 1", S_OK, 1002
         }
     };
     HRESULT hres;

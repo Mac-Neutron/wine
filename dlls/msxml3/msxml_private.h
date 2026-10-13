@@ -39,7 +39,12 @@ enum error_codes
     E_SAX_INFINITEREFLOOP = 0xc00ce003,
     E_SAX_UNPARSEDENTITYREF = 0xc00ce006,
     E_SAX_CONTAINSCOLON = 0xc00ce00c,
+
+    E_DOM_ROOT_NAME_MISMATCH = 0xc00ce013,
+
     E_SAX_UNDECLAREDPREFIX = 0xc00ce01d,
+
+    E_DOM_INVALIDTYPE = 0xc00ce208,
 
     E_SAX_MISSINGEQUALS = 0xc00ce501,
     E_SAX_MISSINGQUOTE = 0xc00ce502,
@@ -256,6 +261,7 @@ extern void domnode_destroy_tree(struct domnode *tree);
 extern struct domnode *domnode_addref(struct domnode *node);
 extern void domnode_release(struct domnode *node);
 extern struct domnode *domnode_get_root_element(struct domnode *doc);
+extern struct domnode *domnode_get_dtd(struct domnode *doc);
 extern struct domnode *domnode_get_first_attribute(struct domnode *node);
 extern struct domnode *domnode_get_next_attribute_sibling(struct domnode *node);
 extern struct domnode *domnode_get_first_child(struct domnode *node);

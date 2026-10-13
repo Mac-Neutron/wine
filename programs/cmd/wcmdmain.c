@@ -1456,7 +1456,7 @@ static void for_control_create(enum for_control_operator for_op, unsigned flags,
     switch (for_ctrl->operator)
     {
     case CMD_FOR_FILETREE:
-        for_ctrl->root_dir = options && *options ? xstrdupW(options) : NULL;
+        for_ctrl->root_dir = options && *options ? WCMD_dup_unquoted(options, wcslen(options)) : NULL;
         break;
     default:
         break;
@@ -1525,28 +1525,28 @@ static BOOL if_condition_parse(WCHAR *start, WCHAR **end, CMD_IF_CONDITION *cond
     if (!wcsicmp(iterator.raw_argument, L"/I"))
     {
         if (cond) cond->case_insensitive = 1;
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
     }
     if (!wcsicmp(iterator.raw_argument, L"NOT"))
     {
         if (cond) cond->negated = 1;
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
     }
     if (!wcsicmp(iterator.raw_argument, L"errorlevel"))
     {
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
         if (cond) cond->op = CMD_IF_ERRORLEVEL;
         if (cond) cond->operand = xstrdupW(iterator.raw_argument);
     }
     else if (!wcsicmp(iterator.raw_argument, L"exist"))
     {
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
         if (cond) cond->op = CMD_IF_EXIST;
         if (cond) cond->operand = xstrdupW(iterator.unquoted_argument);
     }
     else if (!wcsicmp(iterator.raw_argument, L"defined"))
     {
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
         if (cond) cond->op = CMD_IF_DEFINED;
         if (cond) cond->operand = xstrdupW(iterator.raw_argument);
     }
@@ -1588,7 +1588,7 @@ static BOOL if_condition_parse(WCHAR *start, WCHAR **end, CMD_IF_CONDITION *cond
             if (i == ARRAY_SIZE(allowed_operators))
             {
                 if (cond) free((void*)cond->left);
-                return FALSE;
+                goto failure;
             }
             if (cond) cond->op = allowed_operators[i].binop;
         }
@@ -1596,17 +1596,20 @@ static BOOL if_condition_parse(WCHAR *start, WCHAR **end, CMD_IF_CONDITION *cond
         if (!WCMD_word_iterator_advance(&iterator))
         {
             if (cond) free((void*)cond->left);
-            return FALSE;
+            goto failure;
         }
         if (cond) cond->right = xstrdupW(iterator.raw_argument);
     }
     /* check all remaning args are present, and compute pointer to end of condition */
     if (end)
     {
-        if (!WCMD_word_iterator_advance(&iterator)) return FALSE;
+        if (!WCMD_word_iterator_advance(&iterator)) goto failure;
         *end = (WCHAR*)&iterator.from[iterator.position];
     }
     return TRUE;
+failure:
+    WCMD_word_iterator_dispose(&iterator);
+    return FALSE;
 }
 
 static const char *debugstr_if_condition(const CMD_IF_CONDITION *cond)
@@ -3427,8 +3430,11 @@ static BOOL rebuild_append_redirection(struct command_rebuild *rb, const CMD_RED
 {
     WCHAR number[2] = {L'0' + redir->fd, L'\0'};
     WCHAR clonestr[2] = {};
+    WCHAR output[MAXSTRING];
     const WCHAR *op;
     const WCHAR *dst = redir->file;
+    const WCHAR *p;
+    BOOL quote = FALSE;
 
     switch (redir->kind)
     {
@@ -3448,9 +3454,34 @@ static BOOL rebuild_append_redirection(struct command_rebuild *rb, const CMD_RED
         break;
     default: return FALSE;
     }
+    if (redir->kind == REDIR_WRITE_CLONE)
+        return rebuild_append(rb, number) &&
+            rebuild_append(rb, op) &&
+            rebuild_expand_and_append(rb, dst, expand);
+    if (expand)
+    {
+        wcscpy(output, dst);
+        handleExpansion(output, TRUE);
+        dst = output;
+    }
+    if (!*dst) quote = TRUE;
+    for (p = dst; *p; p++)
+    {
+        if (wcschr(L" \t,=;", *p))
+        {
+            quote = TRUE;
+            break;
+        }
+    }
+    if (!quote)
+        return rebuild_append(rb, number) &&
+            rebuild_append(rb, op) &&
+            rebuild_append(rb, dst);
     return rebuild_append(rb, number) &&
         rebuild_append(rb, op) &&
-        rebuild_expand_and_append(rb, dst, expand);
+        rebuild_append(rb, L"\"") &&
+        rebuild_append(rb, dst) &&
+        rebuild_append(rb, L"\"");
 }
 
 static BOOL rebuild_append_all_redirections(struct command_rebuild *rb, const CMD_NODE *node, BOOL expand)
@@ -4243,9 +4274,9 @@ static RETURN_CODE for_loop_fileset_parse_line(CMD_NODE *node, unsigned varidx, 
                                                WCHAR forf_eol, const WCHAR *forf_delims, const WCHAR *forf_tokens)
 {
     RETURN_CODE return_code = NO_ERROR;
+    struct word_iterator iterator;
     struct for_loop_variables flv;
-    WCHAR *parm;
-    unsigned i;
+    unsigned flv_idx, word_idx, i;
 
     for_loop_variables_init(&flv);
     if (!for_loop_fill_variables(forf_tokens, &flv))
@@ -4259,24 +4290,26 @@ static RETURN_CODE for_loop_fileset_parse_line(CMD_NODE *node, unsigned varidx, 
     for (i = 0; i < flv.last + flv.num_duplicates; i++)
         WCMD_set_for_loop_variable(varidx + i, L"");
 
-    for (i = 0; i < flv.last; i++)
+    WCMD_word_iterator_init(&iterator, buffer, forf_delims, 0);
+    for (flv_idx = word_idx = 0; flv_idx < flv.last && WCMD_word_iterator_advance(&iterator); word_idx++)
     {
+        for (i = 0; i < flv.last; i++)
+            if (flv.table[i] == word_idx) break;
+        if (i == flv.last) continue;
         if (flv.has_star && i + 1 == flv.last)
         {
-            WCMD_parameter_with_delims(buffer, flv.table[i], &parm, FALSE, forf_delims);
             TRACE("Parsed all remaining tokens %d(%s) as parameter %s\n",
-                  flv.table[i], debugstr_for_var(varidx + i), wine_dbgstr_w(parm));
-            if (parm)
-                WCMD_set_for_loop_variable(varidx + i, parm);
+                  flv.table[i], debugstr_for_var(varidx + i), wine_dbgstr_w(&iterator.from[iterator.position]));
+            WCMD_set_for_loop_variable(varidx + i, &iterator.from[iterator.position]);
             break;
         }
         /* Extract the token number requested and set into the next variable context */
-        parm = WCMD_parameter_with_delims(buffer, flv.table[i], NULL, TRUE, forf_delims);
         TRACE("Parsed token %d(%s) as parameter %s\n",
-              flv.table[i], debugstr_for_var(varidx + i), wine_dbgstr_w(parm));
-        if (parm)
-            WCMD_set_for_loop_variable(varidx + i, parm);
+              flv.table[i], debugstr_for_var(varidx + i), wine_dbgstr_w(iterator.raw_argument));
+        WCMD_set_for_loop_variable(varidx + i, iterator.raw_argument);
+        flv_idx++;
     }
+    WCMD_word_iterator_dispose(&iterator);
 
     /* Execute the body of the for loop with these values */
     if (forloopcontext->variable[varidx] && forloopcontext->variable[varidx][0] != forf_eol)
@@ -4382,7 +4415,6 @@ static RETURN_CODE for_control_execute_fileset(CMD_FOR_CONTROL *for_ctrl, CMD_NO
     WCHAR *args;
     size_t len;
     FILE *input;
-    int i;
 
     wcscpy(set, for_ctrl->set);
     handleExpansion(set, TRUE);
@@ -4418,67 +4450,66 @@ static RETURN_CODE for_control_execute_fileset(CMD_FOR_CONTROL *for_ctrl, CMD_NO
     }
     else
     {
-        for (i = 0; !WCMD_is_break(return_code); i++)
+        struct word_iterator iterator;
+        WCMD_word_iterator_init(&iterator, args, STANDARD_DELIMS, 0);
+        while (!WCMD_is_break(return_code) && WCMD_word_iterator_advance(&iterator))
         {
-            WCHAR *element = WCMD_parameter(args, i, NULL, TRUE);
-            if (!element || !*element) break;
-            if (element[0] == L'"' && match_ending_delim(element)) element++;
             /* Open the file, read line by line and process */
-            TRACE("Reading input to parse from '%s'\n", wine_dbgstr_w(element));
-            input = _wfopen(element, L"rt,ccs=unicode");
-            if (!input)
+            TRACE("Reading input to parse from '%s'\n", wine_dbgstr_w(iterator.unquoted_argument));
+            if ((input = _wfopen(iterator.unquoted_argument, L"rt,ccs=unicode")))
+            {
+                return_code = for_control_execute_from_FILE(for_ctrl, input, node);
+                fclose(input);
+            }
+            else
             {
                 WCMD_print_error();
-                WCMD_output_stderr(WCMD_LoadMessage(WCMD_READFAIL), element);
-                return errorlevel = ERROR_INVALID_FUNCTION; /* FOR loop aborts at first failure here */
+                WCMD_output_stderr(WCMD_LoadMessage(WCMD_READFAIL), iterator.unquoted_argument);
+                return_code = errorlevel = ERROR_INVALID_FUNCTION; /* FOR loop aborts at first failure here */
             }
-            return_code = for_control_execute_from_FILE(for_ctrl, input, node);
-            fclose(input);
         }
+        WCMD_word_iterator_dispose(&iterator);
     }
 
     return return_code;
 }
 
-static RETURN_CODE for_control_execute_set(CMD_FOR_CONTROL *for_ctrl, const WCHAR *from_dir, size_t ref_len, CMD_NODE *node)
+static RETURN_CODE for_control_execute_set(const CMD_FOR_CONTROL *for_ctrl, const WCHAR *from_dir, size_t ref_len, CMD_NODE *node)
 {
     RETURN_CODE return_code = NO_ERROR;
+    struct word_iterator iterator;
     size_t len;
     WCHAR set[MAXSTRING];
     WCHAR buffer[MAX_PATH];
-    int i;
 
     if (from_dir)
     {
-        len = wcslen(from_dir) + 1;
-        wcscpy(buffer, from_dir);
-        wcscat(buffer, L"\\");
+        len = GetFullPathNameW(from_dir, ARRAY_SIZE(buffer) - 1, buffer, NULL);
+        if (!len || len > ARRAY_SIZE(buffer) - 1) return ERROR_INVALID_FUNCTION;
+        wcscpy(&buffer[len], L"\\");
+        len++;
     }
     else
         len = 0;
 
     wcscpy(set, for_ctrl->set);
     handleExpansion(set, TRUE);
-    for (i = 0; !WCMD_is_break(return_code); i++)
+    WCMD_word_iterator_init(&iterator, set, STANDARD_DELIMS, 0);
+    while (!WCMD_is_break(return_code) && WCMD_word_iterator_advance(&iterator))
     {
-        WCHAR *element = WCMD_parameter(set, i, NULL, TRUE);
-        if (!element || !*element) break;
-        if (len + wcslen(element) + 1 >= ARRAY_SIZE(buffer)) continue;
+        TRACE("Doing set element %s + %s\n", wine_dbgstr_wn(buffer, len), wine_dbgstr_w(iterator.raw_argument));
 
-        wcscpy(&buffer[len], element);
-
-        TRACE("Doing set element %s\n", wine_dbgstr_w(buffer));
-
-        if (wcspbrk(element, L"?*"))
+        if (wcspbrk(iterator.raw_argument, L"?*"))
         {
             WIN32_FIND_DATAW fd;
             HANDLE hff;
             size_t insert_pos;
 
-            if (*buffer == L'"') WCMD_strip_quotes(buffer);
+            /* wildcarded elements are always unquoted */
+            if (len + wcslen(iterator.unquoted_argument) + 1 >= ARRAY_SIZE(buffer)) continue;
+            wcscpy(&buffer[len], iterator.unquoted_argument);
             hff = FindFirstFileW(buffer, &fd);
             insert_pos = wcsrchr(buffer, L'\\') ? wcsrchr(buffer, L'\\') + 1 - buffer : 0;
-
             if (hff == INVALID_HANDLE_VALUE)
             {
                 TRACE("Couldn't FindFirstFile on %s\n", wine_dbgstr_w(buffer));
@@ -4504,14 +4535,18 @@ static RETURN_CODE for_control_execute_set(CMD_FOR_CONTROL *for_ctrl, const WCHA
         }
         else
         {
+            /* non wildcarded elements keep their quotes if any */
+            if (len + wcslen(iterator.raw_argument) + 1 >= ARRAY_SIZE(buffer)) continue;
+            wcscpy(&buffer[len], iterator.raw_argument);
             WCMD_set_for_loop_variable(for_ctrl->variable_index, buffer);
             return_code = node_execute_with_echo(node, echo_mode);
         }
     }
+    WCMD_word_iterator_dispose(&iterator);
     return return_code;
 }
 
-static RETURN_CODE for_control_execute_walk_files(CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node)
+static RETURN_CODE for_control_execute_walk_files(const CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node)
 {
     DIRECTORY_STACK *dirs_to_walk;
     size_t ref_len;
@@ -4543,11 +4578,12 @@ static RETURN_CODE for_control_execute_walk_files(CMD_FOR_CONTROL *for_ctrl, CMD
     return return_code;
 }
 
-static RETURN_CODE for_control_execute_numbers(CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node)
+static RETURN_CODE for_control_execute_numbers(const CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node)
 {
     RETURN_CODE return_code = NO_ERROR;
     WCHAR set[MAXSTRING];
     int numbers[3] = {0, 0, 0}, var;
+    struct word_iterator iterator;
     int i;
 
     wcscpy(set, for_ctrl->set);
@@ -4558,12 +4594,11 @@ static RETURN_CODE for_control_execute_numbers(CMD_FOR_CONTROL *for_ctrl, CMD_NO
      * so (-10 1) is interpreted as (-10 1 0)
      * and (10) loops for ever !!!
      */
-    for (i = 0; i < ARRAY_SIZE(numbers); i++)
+    WCMD_word_iterator_init(&iterator, set, STANDARD_DELIMS, 0);
+    for (i = 0; i < ARRAY_SIZE(numbers) && WCMD_word_iterator_advance(&iterator); i++)
     {
-        WCHAR *element = WCMD_parameter(set, i, NULL, FALSE);
-        if (!element || !*element) break;
-        /* native doesn't no error handling */
-        numbers[i] = wcstol(element, NULL, 0);
+        /* native doesn't do any error handling */
+        numbers[i] = wcstol(iterator.raw_argument, NULL, 0);
     }
 
     for (var = numbers[0];
@@ -4577,6 +4612,7 @@ static RETURN_CODE for_control_execute_numbers(CMD_FOR_CONTROL *for_ctrl, CMD_NO
         TRACE("Processing FOR number %s\n", wine_dbgstr_w(tmp));
         return_code = node_execute_with_echo(node, echo_mode);
     }
+    WCMD_word_iterator_dispose(&iterator);
     return return_code;
 }
 

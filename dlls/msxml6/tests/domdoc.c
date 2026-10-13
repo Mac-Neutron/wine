@@ -1113,7 +1113,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ROOT_NAME_MISMATCH */
-    todo_wine ok(res == 0xC00CE013, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce013, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_14), NULL);
@@ -1340,6 +1340,125 @@ static void test_selection_namespaces(void)
     free_bstrs();
 }
 
+static const WCHAR unicode_xml[] =
+    L"\xfeff<?xml version=\"1.0\" encoding=\"unicode\" ?><u></u>";
+
+static void write_to_file_w(const WCHAR *name, const WCHAR *data)
+{
+    DWORD written;
+    HANDLE hfile;
+    BOOL ret;
+
+    hfile = CreateFileW(name, GENERIC_WRITE|GENERIC_READ, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+    ok(hfile != INVALID_HANDLE_VALUE, "failed to create test file: %s\n", debugstr_w(name));
+
+    ret = WriteFile(hfile, data, wcslen(data) * sizeof(*data), &written, NULL);
+    ok(ret, "WriteFile failed: %s, %ld\n", debugstr_w(name), GetLastError());
+
+    CloseHandle(hfile);
+}
+
+static void test_encoding(void)
+{
+    WCHAR path[MAX_PATH];
+    IXMLDOMDocument *doc;
+    VARIANT_BOOL b;
+    HRESULT hr;
+    VARIANT v;
+
+    /* The 'unicode' encoding */
+    GetTempPathW(MAX_PATH, path);
+    wcscat(path, L"unicode.xml");
+    write_to_file_w(path, unicode_xml);
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IXMLDOMDocument, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = _bstr_(path);
+    hr = IXMLDOMDocument_load(doc, v, &b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    DeleteFileW(path);
+
+    GetTempPathW(MAX_PATH, path);
+    wcscat(path, L"saved-unicode.xml");
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = _bstr_(path);
+    hr = IXMLDOMDocument_save(doc, v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    DeleteFileW(path);
+    IXMLDOMDocument_Release(doc);
+    free_bstrs();
+}
+
+static void test_validateNode(void)
+{
+    IXMLDOMDocumentType *doctype;
+    IXMLDOMElement *element;
+    IXMLDOMParseError *err;
+    IXMLDOMDocument3 *doc;
+    HRESULT hr;
+    VARIANT v;
+    LONG res;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument3, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&v) = VT_I2;
+    V_I2(&v) = 0;
+    hr = IXMLDOMDocument3_setProperty(doc, _bstr_(L"ProhibitDTD"), v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, NULL, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    err = (void *)0x1;
+    hr = IXMLDOMDocument3_validateNode(doc, NULL, &err);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(err == (void *)0x1, "Unexpected error object %p.\n", err);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMDocument3_loadXML(doc, _bstr_(email_xml), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Can't use validateNode() on a document node. */
+    ok(res == 0xc00ce208, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMDocument3_get_doctype(doc, &doctype);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doctype, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Can't use validateNode() on a doctype node. */
+    ok(res == 0xc00ce208, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+    IXMLDOMDocumentType_Release(doctype);
+
+    /* No problem with a root */
+    hr = IXMLDOMDocument3_get_documentElement(doc, &element);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)element, &err);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMParseError_Release(err);
+    IXMLDOMElement_Release(element);
+
+    IXMLDOMDocument3_Release(doc);
+}
+
 START_TEST(domdoc)
 {
     HRESULT hr;
@@ -1367,6 +1486,8 @@ START_TEST(domdoc)
     test_dtd_validation();
     test_max_element_depth_values();
     test_selection_namespaces();
+    test_encoding();
+    test_validateNode();
 
     CoUninitialize();
 }
