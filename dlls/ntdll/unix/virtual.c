@@ -3374,7 +3374,13 @@ void virtual_init(void)
                              (vm_region_info_t)&info, &count, &obj ))
         {
             TRACE( "lowest region %#llx-%#llx prot %d/%d\n", addr, addr + size, info.protection, info.max_protection );
-            if (addr && addr < 0x100000000 && !info.max_protection) set_mem_area_state( (void *)addr, size, AREA_RESERVED );
+            if (addr && addr < 0x100000000 && !info.max_protection)
+            {
+                /* mem areas are in allocation granularity units: the reservation starts after the hard page */
+                char *start = ROUND_ADDR( (char *)addr + granularity_mask, granularity_mask );
+                char *end = ROUND_ADDR( (char *)addr + size, granularity_mask );
+                if (end > start) set_mem_area_state( start, end - start, AREA_RESERVED );
+            }
         }
     }
 #endif
