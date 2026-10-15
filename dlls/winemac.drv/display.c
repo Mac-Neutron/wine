@@ -111,8 +111,10 @@ static void display_mode_to_devmode_fields(CGDirectDisplayID display_id, CGDispl
     if (devmode->dmBitsPerPel)
         devmode->dmFields |= DM_BITSPERPEL;
 
-    devmode->dmPelsWidth = CGDisplayModeGetWidth(display_mode);
-    devmode->dmPelsHeight = CGDisplayModeGetHeight(display_mode);
+    /* MacNeutron: shrink every mode the game is offered with the render scale (see macdrv_cocoa.h).  The Retina
+       doubling for the original mode, further down, doubles these again. */
+    devmode->dmPelsWidth = (DWORD)(CGDisplayModeGetWidth(display_mode) * render_scale + 0.5);
+    devmode->dmPelsHeight = (DWORD)(CGDisplayModeGetHeight(display_mode) * render_scale + 0.5);
     devmode->dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT;
 
     devmode->dmDisplayFlags = 0;
@@ -705,6 +707,13 @@ static CGDisplayModeRef find_best_display_mode(DEVMODEW *devmode, CFArrayRef dis
         {
             width *= 2;
             height *= 2;
+        }
+
+        /* MacNeutron: the game requests a mode shrunk by the render scale, so shrink the candidates to match. */
+        if (render_scale != 1.0)
+        {
+            width = (size_t)(width * render_scale + 0.5);
+            height = (size_t)(height * render_scale + 0.5);
         }
 
         if (bpp != mode_bpp)

@@ -116,29 +116,40 @@ extern CFDictionaryRef localized_strings;
 extern bool retina_enabled;  /* Whether Retina mode is enabled via registry setting. */
 extern bool retina_on;       /* Whether Retina mode is currently active (enabled and display is in default mode). */
 extern bool enable_app_nap;
+/* MacNeutron: the fraction of its real size the driver reports the desktop at (the launcher's MACNEUTRON_UPSCALE,
+ * through MACNEUTRON_DISPLAY_SCALE).  The Mac/Win conversions below shrink everything the driver reports (the
+ * desktop, monitor and window rects, display modes and mouse positions) by this, so the game renders fewer pixels
+ * and lays out its UI, which shares the back buffer, for the smaller size; the presenter upscales it. 1.0: the real
+ * size, as before. */
+extern double render_scale;
+
+/* MacNeutron: Win coordinates are Mac points times this.  A Retina point is two Win pixels, and a virtualised
+ * desktop is reported 1/render_scale times its real size, so the window still covers the display. */
+static inline double cg_win_mac_scale(void)
+{
+    return retina_on ? render_scale * 2 : render_scale;
+}
 
 static inline CGRect cgrect_mac_from_win(CGRect rect)
 {
-    if (retina_on)
-    {
-        rect.origin.x /= 2;
-        rect.origin.y /= 2;
-        rect.size.width /= 2;
-        rect.size.height /= 2;
-    }
+    double scale = cg_win_mac_scale();
+
+    rect.origin.x /= scale;
+    rect.origin.y /= scale;
+    rect.size.width /= scale;
+    rect.size.height /= scale;
 
     return rect;
 }
 
 static inline CGRect cgrect_win_from_mac(CGRect rect)
 {
-    if (retina_on)
-    {
-        rect.origin.x *= 2;
-        rect.origin.y *= 2;
-        rect.size.width *= 2;
-        rect.size.height *= 2;
-    }
+    double scale = cg_win_mac_scale();
+
+    rect.origin.x *= scale;
+    rect.origin.y *= scale;
+    rect.size.width *= scale;
+    rect.size.height *= scale;
 
     return rect;
 }
@@ -167,22 +178,20 @@ static inline CGSize cgsize_win_from_mac(CGSize size)
 
 static inline CGPoint cgpoint_mac_from_win(CGPoint point)
 {
-    if (retina_on)
-    {
-        point.x /= 2;
-        point.y /= 2;
-    }
+    double scale = cg_win_mac_scale();
+
+    point.x /= scale;
+    point.y /= scale;
 
     return point;
 }
 
 static inline CGPoint cgpoint_win_from_mac(CGPoint point)
 {
-    if (retina_on)
-    {
-        point.x *= 2;
-        point.y *= 2;
-    }
+    double scale = cg_win_mac_scale();
+
+    point.x *= scale;
+    point.y *= scale;
 
     return point;
 }
