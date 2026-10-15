@@ -702,20 +702,23 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
     - (void) updateFullscreenWindows
     {
+        BOOL anyFullscreen = FALSE;
+        BOOL anyFullscreenOnScreen = FALSE;
+        NSNumber* windowNumber;
+
+        for (windowNumber in [NSWindow windowNumbersWithOptions:0])
+        {
+            WineWindow* window = (WineWindow*)[NSApp windowWithWindowNumber:[windowNumber integerValue]];
+            if ([window isKindOfClass:[WineWindow class]] && window.fullscreen)
+            {
+                anyFullscreen = TRUE;
+                if ([window isVisible] && [window isOnActiveSpace])
+                    anyFullscreenOnScreen = TRUE;
+            }
+        }
+
         if (capture_displays_for_fullscreen && [NSApp isActive])
         {
-            BOOL anyFullscreen = FALSE;
-            NSNumber* windowNumber;
-            for (windowNumber in [NSWindow windowNumbersWithOptions:0])
-            {
-                WineWindow* window = (WineWindow*)[NSApp windowWithWindowNumber:[windowNumber integerValue]];
-                if ([window isKindOfClass:[WineWindow class]] && window.fullscreen)
-                {
-                    anyFullscreen = TRUE;
-                    break;
-                }
-            }
-
             if (anyFullscreen)
             {
                 if ([self areDisplaysCaptured] || CGCaptureAllDisplays() == CGDisplayNoErr)
@@ -727,6 +730,17 @@ static NSString* WineLocalizedString(unsigned int stringID)
                     displaysCapturedForFullscreen = FALSE;
             }
         }
+
+        /* MacNeutron: a window that covers the screen (a game's borderless full screen) must show over the Dock and
+         * the menu bar, as a native full screen game does; otherwise the Dock and the menu bar draw over it.  Wine
+         * captures the displays for a full screen window only when asked (CaptureDisplaysForFullscreen), which also
+         * stops other apps from showing, so hide just the two instead.  Setting this while another app is active is
+         * harmless (macOS applies it only to the active app), which keeps it from depending on when the window became
+         * full screen against when we were activated. */
+        if (anyFullscreenOnScreen && !displaysCapturedForFullscreen)
+            [NSApp setPresentationOptions:NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar];
+        else
+            [NSApp setPresentationOptions:NSApplicationPresentationDefault];
     }
 
     - (void) activeSpaceDidChange

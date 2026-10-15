@@ -53,6 +53,7 @@ bool use_precise_scrolling = true;
 int gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
 bool retina_enabled = false;
 bool enable_app_nap = false;
+double render_scale = 1.0;
 
 pthread_key_t macdrv_thread_data_key = 0;
 UINT64 app_icon_callback = 0;
@@ -367,6 +368,22 @@ static void setup_options(void)
         retina_enabled = IS_OPTION_TRUE(buffer[0]);
 
     retina_on = retina_enabled;
+
+    /* MacNeutron: the launcher's MACNEUTRON_UPSCALE, through MACNEUTRON_DISPLAY_SCALE, reports the desktop smaller so
+       the game renders fewer pixels and lays out its UI (which shares the back buffer) for that size; the presenter
+       upscales it.  Anything but a number in [0.25, 1] leaves the real size. */
+    {
+        const char *scale = getenv("MACNEUTRON_DISPLAY_SCALE");
+
+        if (scale && *scale)
+        {
+            char *end;
+            double value = strtod(scale, &end);
+
+            if (end != scale && !*end && value >= 0.25 && value <= 1.0)
+                render_scale = value;
+        }
+    }
 
     if (appkey) NtClose(appkey);
     if (hkey) NtClose(hkey);

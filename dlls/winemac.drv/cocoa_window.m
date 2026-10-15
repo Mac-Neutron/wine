@@ -99,6 +99,12 @@ static BOOL frame_intersects_screens(NSRect frame, NSArray* screens)
 
 static NSScreen* screen_covered_by_rect(NSRect rect, NSArray* screens)
 {
+    /* MacNeutron: this driver reports the desktop at the real size times the render scale (MACNEUTRON_DISPLAY_SCALE),
+     * so a window that covers the screen comes back a fraction of a point short of it, or off its origin (a ratio that
+     * divides evenly, such as 0.5, does not).  Such a window still covers the screen, and treating it as a windowed one
+     * costs it its window level and its place over the Dock and the menu bar, so allow that sub-point slack. */
+    rect = NSInsetRect(rect, -1, -1);
+
     for (NSScreen* screen in screens)
     {
         if (NSContainsRect(rect, [screen frame]))
