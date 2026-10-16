@@ -27,6 +27,7 @@
 #include "winnls.h"
 #include "wincontypes.h"
 #include "winternl.h"
+#include "winver.h"
 #include "processsnapshot.h"
 
 #include "kernelbase.h"
@@ -505,6 +506,60 @@ done:
 /**********************************************************************
  *           CreateProcessInternalW   (kernelbase.@)
  */
+/* The ProductName version resource of app_name (or of the current executable when NULL), for Proton's EAC
+ * handling below and in locale.c. HeapFree the result. */
+char *get_product_name( const WCHAR *app_name )
+{
+    WCHAR full_path[MAX_PATH];
+    char *product_name, *ret;
+    DWORD *translation;
+    char buf[100];
+    void *block;
+    UINT size;
+
+    if (app_name)
+    {
+        if (!GetLongPathNameW( app_name, full_path, MAX_PATH )) lstrcpynW( full_path, app_name, MAX_PATH );
+        if (!GetFullPathNameW( full_path, MAX_PATH, full_path, NULL )) lstrcpynW( full_path, app_name, MAX_PATH );
+    }
+    else
+    {
+        *full_path = 0;
+        GetModuleFileNameW( NULL, full_path, MAX_PATH );
+    }
+
+    size = GetFileVersionInfoSizeExW(0, full_path, NULL);
+    if (!size)
+        return NULL;
+
+    block = HeapAlloc( GetProcessHeap(), 0, size );
+
+    if (!GetFileVersionInfoExW(0, full_path, 0, size, block))
+    {
+        HeapFree( GetProcessHeap(), 0, block );
+        return NULL;
+    }
+
+    if (!VerQueryValueA(block, "\\VarFileInfo\\Translation", (void **) &translation, &size) || size != 4)
+    {
+        HeapFree( GetProcessHeap(), 0, block );
+        return NULL;
+    }
+
+    sprintf(buf, "\\StringFileInfo\\%08lx\\ProductName", MAKELONG(HIWORD(*translation), LOWORD(*translation)));
+
+    if (!VerQueryValueA(block, buf, (void **) &product_name, &size))
+    {
+        HeapFree( GetProcessHeap(), 0, block );
+        return NULL;
+    }
+
+    ret = HeapAlloc( GetProcessHeap(), 0, strlen( product_name ) + 1 );
+    strcpy( ret, product_name );
+    HeapFree( GetProcessHeap(), 0, block );
+    return ret;
+}
+
 BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR *app_name, WCHAR *cmd_line,
                                                       SECURITY_ATTRIBUTES *process_attr,
                                                       SECURITY_ATTRIBUTES *thread_attr,
@@ -518,6 +573,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
     RTL_USER_PROCESS_INFORMATION rtl_info = { 0 };
     HANDLE parent = 0, debug = 0;
+    char *product_name = NULL;
     ULONG nt_flags = 0;
     USHORT machine = 0;
     NTSTATUS status;
@@ -543,6 +599,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         app_name = name;
     }
 
+    product_name = get_product_name( app_name );
+
     /* Warn if unsupported features are used */
 
     if (flags & (IDLE_PRIORITY_CLASS | HIGH_PRIORITY_CLASS | REALTIME_PRIORITY_CLASS |
@@ -566,6 +624,47 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     {
         status = STATUS_NO_MEMORY;
         goto done;
+    }
+
+    /* Set PROTON_EAC_LAUNCHER_PROCESS when launching the EAC launcher to let ntdll know to load the native EAC client library.
+      - We don't do this check in ntdll itself because it's harder to get the product name there
+      - we don't overwrite WINEDLLOVERRIDES because it's fetched from the unix environment */
+    {
+        UNICODE_STRING var_name, value;
+        WCHAR exe_path[MAX_PATH], *q;
+
+        WCHAR *new_env = RtlAllocateHeap( GetProcessHeap(), 0, params->EnvironmentSize );
+        memcpy(new_env, params->Environment, params->EnvironmentSize);
+
+        RtlDestroyProcessParameters( params );
+
+        if (product_name && !strcmp( product_name, "Easy Anti-Cheat Bootstrapper (EOS)" ))
+        {
+            q = (WCHAR *)app_name + wcslen( app_name );
+            while (q != app_name && *q != '/' && *q != '\\') --q;
+            if (q != app_name)
+            {
+                /* The current directory may actually be wrong for the game executable (started by EAC bootstrapper)
+                 * and not the bootstrapper itself started here but it is easier to workaround this way.  */
+                memcpy( exe_path, app_name, (q - app_name) * sizeof(*q) );
+                exe_path[q - app_name] = 0;
+                cur_dir = exe_path;
+            }
+        }
+
+        RtlInitUnicodeString( &var_name, L"PROTON_EAC_LAUNCHER_PROCESS" );
+        RtlInitUnicodeString( &value, L"1" );
+        RtlSetEnvironmentVariable( &new_env, &var_name,
+                                   product_name && !strcmp( product_name, "EasyAntiCheat Launcher" ) ? &value : NULL );
+
+        params = create_process_params( app_name, tidy_cmdline, cur_dir, new_env, flags | CREATE_UNICODE_ENVIRONMENT, startup_info );
+
+        RtlFreeHeap(GetProcessHeap(), 0, new_env);
+        if (!params)
+        {
+            status = STATUS_NO_MEMORY;
+            goto done;
+        }
     }
 
     if (flags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS))
@@ -686,6 +785,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
 
  done:
     RtlDestroyProcessParameters( params );
+    HeapFree( GetProcessHeap(), 0, product_name );
     if (tidy_cmdline != cmd_line) HeapFree( GetProcessHeap(), 0, tidy_cmdline );
     return set_ntstatus( status );
 }
