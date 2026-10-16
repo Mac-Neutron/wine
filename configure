@@ -1772,6 +1772,7 @@ enable_xml2
 enable_xslt
 enable_zlib
 enable_loader
+enable_loader64
 enable_nls
 enable_po
 enable_arp
@@ -21844,6 +21845,13 @@ then
     enable_compiler_rt=${enable_compiler_rt:-no}
 fi
 
+if test "$host_cpu" = "x86_64"
+then
+    enable_loader64=${enable_loader64:-yes}
+else
+    enable_loader64=${enable_loader64:-no}
+fi
+
 enable_winetest=${enable_winetest:-$enable_tests}
 
 
@@ -22974,6 +22982,7 @@ wine_fn_config_makefile libs/xml2 enable_xml2
 wine_fn_config_makefile libs/xslt enable_xslt
 wine_fn_config_makefile libs/zlib enable_zlib
 wine_fn_config_makefile loader enable_loader
+wine_fn_config_makefile loader64 enable_loader64
 wine_fn_config_makefile nls enable_nls
 wine_fn_config_makefile po enable_po
 wine_fn_config_makefile programs/arp enable_arp

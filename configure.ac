@@ -2371,6 +2371,13 @@ then
     enable_compiler_rt=${enable_compiler_rt:-no}
 fi
 
+if test "$host_cpu" = "x86_64"
+then
+    enable_loader64=${enable_loader64:-yes}
+else
+    enable_loader64=${enable_loader64:-no}
+fi
+
 dnl Disable winetest too if tests are disabled
 enable_winetest=${enable_winetest:-$enable_tests}
 
@@ -3503,6 +3510,7 @@ WINE_CONFIG_MAKEFILE(libs/xml2)
 WINE_CONFIG_MAKEFILE(libs/xslt)
 WINE_CONFIG_MAKEFILE(libs/zlib)
 WINE_CONFIG_MAKEFILE(loader)
+WINE_CONFIG_MAKEFILE(loader64)
 WINE_CONFIG_MAKEFILE(nls)
 WINE_CONFIG_MAKEFILE(po)
 WINE_CONFIG_MAKEFILE(programs/arp)
