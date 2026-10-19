@@ -354,6 +354,18 @@ int __cdecl __wine_dbg_header( enum __wine_debug_class cls, struct __wine_debug_
 /***********************************************************************
  *		dbg_init
  */
+/***********************************************************************
+ *		dbg_init_options
+ *
+ * Read WINEDEBUG while main_argv[1] is still the program: init_startup_info's rebuild_argv drops argv[0], and
+ * init_options takes the process name from main_argv[1]. A trace before then used to read them lazily; with the
+ * traces compiled out (WINE_NO_TRACE_MSGS) the first read came after, from a NULL main_argv[1] in a child process.
+ */
+void dbg_init_options(void)
+{
+    if (nb_debug_options == -1) init_options();
+}
+
 void dbg_init(void)
 {
     struct __wine_debug_channel *options, default_option = { default_flags };

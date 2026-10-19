@@ -414,6 +414,7 @@ extern NTSTATUS wow64_wine_server_handle_to_fd( void *args );
 extern NTSTATUS wow64_wine_spawnvp( void *args );
 #endif
 
+extern void dbg_init_options(void);
 extern void dbg_init(void);
 
 extern void close_inproc_sync( HANDLE handle );

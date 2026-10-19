@@ -1921,6 +1921,7 @@ static void start_main_thread(void)
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
+    dbg_init_options();
     init_startup_info();
     dbg_init();
     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
