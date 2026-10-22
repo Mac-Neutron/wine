@@ -3053,14 +3053,27 @@ failed:
 static inline int get_dos_prefix_len( const UNICODE_STRING *name )
 {
     static const WCHAR dosdev_prefixW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\'};
+    /* \??\GLOBALROOT is the object manager's root, so \??\GLOBALROOT\??\C:\dir is \??\C:\dir: a program opening
+     * "\\.\GLOBALROOT" + an image's mapped file name gets there. */
+    static const WCHAR globalrootW[] = {'\\','?','?','\\','G','l','o','b','a','l','R','o','o','t'};
+    const WCHAR *prefix = name->Buffer;
+    USHORT length = name->Length;
+    int skip = 0;
 
-    if (name->Length >= sizeof(nt_prefixW) &&
-        !memcmp( name->Buffer, nt_prefixW, sizeof(nt_prefixW) ))
-        return ARRAY_SIZE( nt_prefixW );
+    if (length >= sizeof(globalrootW) && !wcsnicmp( prefix, globalrootW, ARRAY_SIZE( globalrootW )))
+    {
+        prefix += ARRAY_SIZE( globalrootW );
+        length -= sizeof(globalrootW);
+        skip = ARRAY_SIZE( globalrootW );
+    }
 
-    if (name->Length >= sizeof(dosdev_prefixW) &&
-        !wcsnicmp( name->Buffer, dosdev_prefixW, ARRAY_SIZE( dosdev_prefixW )))
-        return ARRAY_SIZE( dosdev_prefixW );
+    if (length >= sizeof(nt_prefixW) &&
+        !memcmp( prefix, nt_prefixW, sizeof(nt_prefixW) ))
+        return skip + ARRAY_SIZE( nt_prefixW );
+
+    if (length >= sizeof(dosdev_prefixW) &&
+        !wcsnicmp( prefix, dosdev_prefixW, ARRAY_SIZE( dosdev_prefixW )))
+        return skip + ARRAY_SIZE( dosdev_prefixW );
 
     return 0;
 }
