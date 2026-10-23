@@ -1242,6 +1242,29 @@ void __cdecl _Throw_C_error(int code)
     _CxxThrowException(&se, &system_error_exception_type);
 }
 
+/* ?_Throw_Cpp_error@std@@YAXH@Z */
+void __cdecl _Throw_Cpp_error(int code)
+{
+    /* the STL's _BUSY, _INVALID_ARGUMENT, _NO_SUCH_PROCESS, _NOT_ENOUGH_MEMORY, _OPERATION_NOT_PERMITTED,
+     * _RESOURCE_DEADLOCK_WOULD_OCCUR and _RESOURCE_UNAVAILABLE_TRY_AGAIN */
+    static const errno_t codes[] = { EBUSY, EINVAL, ESRCH, ENOMEM, EPERM, EDEADLK, EAGAIN };
+    system_error se;
+    const char *msg;
+
+    WARN("(%d) from %p\n", code, __builtin_return_address(0));
+
+    if (code < 0 || code >= ARRAY_SIZE(codes))
+        abort();
+
+    msg = strerror(codes[code]);
+    MSVCP_runtime_error_ctor(&se.base, &msg);
+    se.code.code = codes[code];
+    se.code.category = std_generic_category();
+    se.base.e.vtable = &system_error_vtable;
+
+    _CxxThrowException(&se, &system_error_exception_type);
+}
+
 /* compute the this pointer for a base class of a given type */
 static inline void *get_this_pointer( const this_ptr_offsets *off, void *object )
 {
