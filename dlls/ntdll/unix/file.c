@@ -6508,6 +6508,66 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
         break;
     }
 
+    case FSCTL_GET_REPARSE_POINT:
+    {
+        union
+        {
+            REPARSE_DATA_BUFFER buffer;
+            char data[offsetof( REPARSE_DATA_BUFFER, MountPointReparseBuffer.PathBuffer[64] )];
+        } reparse;
+        REPARSE_DATA_BUFFER *buffer = &reparse.buffer;
+        char name[64];
+        struct stat st;
+        BOOL mount_point = FALSE;
+        int len;
+
+        /* fd_get_file_info() calls a mount point a reparse point; answer for it as Windows does for a volume
+         * mounted in a directory: a mount point to \??\Volume{GUID}\, with no print name.
+         * ponytail: the GUID is made of st_dev; mountmgr knows no such volume, so the target doesn't open */
+        if ((options & FILE_OPEN_REPARSE_POINT) && !server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))
+        {
+            mount_point = !fstat( fd, &st ) && fd_is_mount_point( fd, &st );
+            if (needs_close) close( fd );
+        }
+        if (!mount_point)
+            return server_ioctl_file( handle, event, apc, apc_context, io, code,
+                                      in_buffer, in_size, out_buffer, out_size );
+
+        /* the size checks are the server's get_reparse_point() ones */
+        if (!out_size)
+        {
+            status = STATUS_INVALID_USER_BUFFER;
+            break;
+        }
+        if (out_size < sizeof(REPARSE_GUID_DATA_BUFFER))
+        {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        len = snprintf( name, sizeof(name), "\\??\\Volume{%08x-%04x-%04x-0000-000000000000}\\",
+                        (UINT)st.st_dev, (UINT)((ULONG64)st.st_dev >> 32) & 0xffff,
+                        (UINT)((ULONG64)st.st_dev >> 48) );
+        size = offsetof( REPARSE_DATA_BUFFER, MountPointReparseBuffer.PathBuffer[len + 2] );
+        buffer->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+        buffer->ReparseDataLength = size - offsetof( REPARSE_DATA_BUFFER, MountPointReparseBuffer );
+        buffer->Reserved = 0;
+        buffer->MountPointReparseBuffer.SubstituteNameOffset = 0;
+        buffer->MountPointReparseBuffer.SubstituteNameLength = len * sizeof(WCHAR);
+        buffer->MountPointReparseBuffer.PrintNameOffset = (len + 1) * sizeof(WCHAR);
+        buffer->MountPointReparseBuffer.PrintNameLength = 0;
+        ascii_to_unicode( buffer->MountPointReparseBuffer.PathBuffer, name, len );
+        buffer->MountPointReparseBuffer.PathBuffer[len] = 0;
+        buffer->MountPointReparseBuffer.PathBuffer[len + 1] = 0;
+        status = STATUS_SUCCESS;
+        if (size > out_size)
+        {
+            status = STATUS_BUFFER_OVERFLOW;
+            size = out_size;
+        }
+        memcpy( out_buffer, buffer, size );
+        break;
+    }
+
     case FSCTL_SET_SPARSE:
         TRACE("FSCTL_SET_SPARSE: Ignoring request\n");
         status = STATUS_SUCCESS;
