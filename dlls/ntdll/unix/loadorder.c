@@ -283,7 +283,8 @@ static void add_load_order_set( WCHAR *entry )
  */
 static void init_load_order(void)
 {
-    WCHAR *entry, *next, *order;
+    static WCHAR order[4096];
+    WCHAR *entry, *next;
     const char *overrides = getenv( "WINEDLLOVERRIDES" );
 
     /* @@ Wine registry key: HKCU\Software\Wine\DllOverrides */
@@ -292,15 +293,27 @@ static void init_load_order(void)
     init_done = TRUE;
 
     if (!overrides) return;
-    order = entry = malloc( (strlen(overrides) + 1) * sizeof(WCHAR) );
-    ntdll_umbstowcs( overrides, strlen(overrides) + 1, order, strlen(overrides) + 1 );
-    while (*entry)
+    /* A static buffer, not malloc: a process whose EAC module hooks the heap can reset init_done and make the
+     * re-parse allocate from the hooked heap.  The names the list stores point into this buffer. */
+    size_t len = strlen(overrides);
+    if (len >= ARRAY_SIZE(order)) len = ARRAY_SIZE(order) - 1;
+    env_list.count = 0;
+    entry = order;
+    /* The environment is not trusted here: a process that hooks heap or loader entry points (an anti-cheat's
+     * in-process module does) can leave this string unterminated or reset init_done, so parse only inside the
+     * converted buffer and never call wcslen/wcschr without an end. The buffer ends at what was converted (fewer
+     * WCHARs than bytes for non-ASCII text), terminated there; the last entry runs up to that end. */
+    DWORD count = ntdll_umbstowcs( overrides, len, order, len );
+    if (!count) return;
+    order[count] = 0;
+    WCHAR *end = order + count;
+    while (entry < end && *entry)
     {
-        while (*entry == ';') entry++;
-        if (!*entry) break;
-        next = wcschr( entry, ';' );
-        if (next) *next++ = 0;
-        else next = entry + wcslen(entry);
+        while (entry < end && *entry == ';') entry++;
+        if (entry >= end || !*entry) break;
+        next = entry;
+        while (next < end && *next && *next != ';') next++;
+        if (next < end && *next == ';') *next++ = 0;
         add_load_order_set( entry );
         entry = next;
     }
@@ -518,6 +531,7 @@ enum loadorder get_load_order( const UNICODE_STRING *nt_name, BOOL is_system_dir
 
     static const WCHAR prefixW[] = {'\\','?','?','\\'};
     enum loadorder ret = LO_INVALID;
+    if (!nt_name || !nt_name->Buffer || nt_name->Length < sizeof(WCHAR) || nt_name->Length > 0x1000) return LO_DEFAULT;
     const WCHAR *path = nt_name->Buffer;
     unsigned int len = nt_name->Length / sizeof(WCHAR);
     WCHAR *module, *basename;

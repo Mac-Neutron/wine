@@ -1131,3 +1131,14 @@ NTSTATUS WINAPI NtAllocateUuids( ULARGE_INTEGER *time, ULONG *delta, ULONG *sequ
     FIXME( "(%p,%p,%p,%p), stub.\n", time, delta, sequence, seed );
     return STATUS_SUCCESS;
 }
+
+
+/***********************************************************************
+ *             NtPrivilegedServiceAuditAlarm  (NTDLL.@)
+ */
+NTSTATUS WINAPI NtPrivilegedServiceAuditAlarm( PUNICODE_STRING service_name, PUNICODE_STRING service_principal,
+                                              HANDLE client_token, PPRIVILEGE_SET privileges, BOOLEAN handle_revoked )
+{
+    FIXME( "(%p,%p,%p,%p,%d), stub.\n", service_name, service_principal, client_token, privileges, handle_revoked );
+    return STATUS_SUCCESS;
+}

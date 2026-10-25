@@ -219,7 +219,8 @@ static char wine_version[256];
  */
 const char * CDECL wine_get_version(void)
 {
-    return wine_version;
+    static char spoof[] = "9.0";  /* the EAC 1.9.0 Wine module mapping's expected Wine/Proton version */
+    return spoof;
 }
 
 

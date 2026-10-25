@@ -271,7 +271,8 @@
     SYSCALL_ENTRY( 0x010b, NtWow64IsProcessorFeaturePresent, 4 ) \
     SYSCALL_ENTRY( 0x010c, NtWow64QueryInformationProcess64, 20 ) \
     SYSCALL_ENTRY( 0x010d, NtWow64ReadVirtualMemory64, 28 ) \
-    SYSCALL_ENTRY( 0x010e, NtWow64WriteVirtualMemory64, 28 )
+    SYSCALL_ENTRY( 0x010e, NtWow64WriteVirtualMemory64, 28 ) \
+    SYSCALL_ENTRY( 0x013f, NtPrivilegedServiceAuditAlarm, 20 )
 #ifdef _WIN64
 #define ALL_SYSCALLS \
     SYSCALL_ENTRY( 0x0000, NtAccessCheck, 64 ) \
@@ -538,7 +539,8 @@
     SYSCALL_ENTRY( 0x0105, NtUnmapViewOfSectionEx, 24 ) \
     SYSCALL_ENTRY( 0x0106, NtWaitForAlertByThreadId, 16 ) \
     SYSCALL_ENTRY( 0x0107, NtWaitForDebugEvent, 32 ) \
-    SYSCALL_ENTRY( 0x0108, NtWaitForKeyedEvent, 32 )
+    SYSCALL_ENTRY( 0x0108, NtWaitForKeyedEvent, 32 ) \
+    SYSCALL_ENTRY( 0x013f, NtPrivilegedServiceAuditAlarm, 40 )
 #else
 #define ALL_SYSCALLS ALL_SYSCALLS32
 #endif

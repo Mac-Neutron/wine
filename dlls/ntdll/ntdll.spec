@@ -308,7 +308,7 @@
 @ stdcall -syscall=0x005f NtPowerInformation(long ptr long ptr long)
 @ stdcall -syscall NtPrivilegeCheck(ptr ptr ptr)
 # @ stub NtPrivilegeObjectAuditAlarm
-# @ stub NtPrivilegedServiceAuditAlarm
+@ stdcall -syscall=0x013f NtPrivilegedServiceAuditAlarm(ptr ptr ptr ptr long)
 @ stdcall -syscall=0x0050 NtProtectVirtualMemory(long ptr ptr long ptr)
 @ stdcall -syscall NtPulseEvent(long ptr)
 @ stdcall -syscall=0x003d NtQueryAttributesFile(ptr ptr)

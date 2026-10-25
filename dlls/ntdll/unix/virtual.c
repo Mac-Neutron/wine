@@ -3120,6 +3120,23 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
 
+    /* An image section of the process's own executable, mapped again at its preferred base (the EAC bootstrapper
+     * maps its own exe to read the embedded anti-cheat module): the main image already occupies that base.  Return
+     * the existing mapping, as Windows does, instead of a relocated view with STATUS_IMAGE_NOT_AT_BASE.  The size
+     * check keeps a different image with the same preferred base (the game exe) from reusing it. */
+    if (!(pe_mapping->image.image_charact & IMAGE_FILE_DLL) && !offset &&
+        pe_mapping->image.base == (ULONG_PTR)main_module)
+    {
+        struct file_view *main_view = find_view( main_module, size );
+        if (main_view && main_view->size >= size)
+        {
+            *addr_ptr = main_module;
+            *size_ptr = size;
+            status = STATUS_SUCCESS;
+            goto done;
+        }
+    }
+
     status = map_image_view( &view, &pe_mapping->image, size, limit_low, limit_high, alloc_type );
     if (status) goto done;
 
@@ -3263,6 +3280,14 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
     if ((res = server_get_unix_fd( handle, 0, &unix_handle, &needs_close, NULL, NULL ))) return res;
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+
+    /* A file section mapped at an explicit address must not silently replace an existing image (the EAC loader maps
+     * the anti-cheat module at the game image base, unmaps the old game image, and maps the module there). */
+    if (base && find_view_range( base, size ))
+    {
+        res = STATUS_CONFLICTING_ADDRESSES;
+        goto done;
+    }
 
     res = map_view( &view, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
     if (res) goto done;
@@ -6259,6 +6284,9 @@ done:
  */
 NTSTATUS WINAPI NtUnmapViewOfSection( HANDLE process, PVOID addr )
 {
+    /* Keep the EAC loader's main image mapped: its Wine module mapping unmaps the game image base, which for the
+     * bootstrapper is its own executable; removing it makes the loader fault on its own next instruction. */
+    if (addr == main_module && process == GetCurrentProcess()) return STATUS_INVALID_PARAMETER;
     return unmap_view_of_section( process, addr, 0 );
 }
 

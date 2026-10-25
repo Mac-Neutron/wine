@@ -141,7 +141,7 @@ WRAP_FUNC( NtInitiatePowerAction, ARG4 )
 WRAP_FUNC( NtOpenThreadToken, ARG3 )
 WRAP_FUNC( NtOpenThreadTokenEx, ARG3 )
 /* WRAP_FUNC( NtPrivilegeObjectAuditAlarm, ARG6 ) */
-/* WRAP_FUNC( NtPrivilegedServiceAuditAlarm, ARG5 ) */
+WRAP_FUNC( NtPrivilegedServiceAuditAlarm, ARG5 )
 WRAP_FUNC( NtQueryDefaultLocale, ARG1 )
 WRAP_FUNC( NtQueryDirectoryObject, ARG4 ARG5 )
 WRAP_FUNC( NtReleaseKeyedEvent, ARG3 )
