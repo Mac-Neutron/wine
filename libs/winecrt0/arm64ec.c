@@ -32,6 +32,9 @@
 #include "winnt.h"
 #include "wine/asm.h"
 
+/* Weak: a module that links mingw-w64's CRT (DXMT's winemetal.dll, built by its own meson) takes the CHPE metadata
+ * from its chpe.o now that winebuild generates ours, and chpe.o defines this same helper; theirs then wins. */
+asm( ".weak __icall_helper_arm64ec" );
 __ASM_GLOBAL_FUNC( __icall_helper_arm64ec,
                    "stp fp, lr, [sp, #-0x10]!\n\t"
                    ".seh_save_fplr_x 16\n\t"
