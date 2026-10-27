@@ -1,6 +1,7 @@
 MODULE = libxess_dx11.dll
-# XeSS has no 32-bit runtime (Intel ships x64 only), and these follow its 64-bit structures.
-ENABLE_ARCHS = x86_64
+# XeSS has no 32-bit runtime (Intel ships x64 only), and these follow its 64-bit structures: every 64-bit arch
+# (the Mac's ARM64X build is aarch64 and arm64ec), never i386.
+ENABLE_ARCHS = aarch64 arm64ec x86_64
 PARENTSRC = ../libxess
 
 VER_FILEDESCRIPTION_STR = "Wine XeSS stand-in"
